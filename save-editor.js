@@ -70,12 +70,25 @@ function classify(path){
 	if (ms && PERK_PARAMS[ms[1]]) return { kind: 'perkSpent', hint: ' — normally set automatically by editing this perk’s level' };
 	if (/^resources\.[^.]+\.max$/.test(path) || path === 'resources.trimps.maxSoldiers')
 		return { kind: 'derived', hint: ' — derived; the game recomputes this, so edits won’t stick' };
-	if (/^equipment\.[^.]+\.(healthCalculated|blockCalculated|attackCalculated)$/.test(path))
-		return { kind: 'derived', hint: ' — derived from level/prestige; edit those instead' };
+	var me = path.match(/^equipment\.([^.]+)\.(level|prestige|healthCalculated|blockCalculated|attackCalculated|locked|blockNow|oc)$/);
+	if (me){
+		var equipName = me[1], field = me[2];
+		if (field === 'level') return { kind: 'equipLevel', equip: equipName,
+			hint: ' — linked: the matching army stat total auto-adjusts' };
+		if (field === 'prestige') return { kind: 'equipPrestige', equip: equipName,
+			hint: ' — safe alone: the game recomputes stats and cost from this on load' };
+		if (field === 'locked') return { kind: 'safe', hint: ' — 0 = owned/available, 1 = locked' };
+		if (field === 'oc') return { kind: 'safe', hint: ' — base cost; prices recompute from this on load' };
+		if (field === 'blockNow') return { kind: 'blockNow',
+			hint: ' — Shield block-vs-health routing; tied to the Blockmaster upgrade' };
+		return { kind: 'derived',
+			hint: ' — recomputed from prestige on load; the saved value is used to rebalance your stats, so edit level or prestige instead' };
+	}
 	if (/^jobs\.[^.]+\.modifier$/.test(path))
 		return { kind: 'derived', hint: ' — derived from job level; edits won’t stick' };
 	if (path === 'global.world') return { kind: 'zone', hint: ' — changing zone alone leaves a stale enemy grid' };
 	if (/^jobs\.[^.]+\.owned$/.test(path)) return { kind: 'jobOwned' };
+	if (path === 'resources.trimps.owned' || path === 'resources.trimps.soldiers') return { kind: 'popCheck' };
 	return { kind: 'safe' };
 }
 
@@ -111,11 +124,28 @@ function coerce(descriptor, input, checked){
 	if (descriptor.type === 'string') return input;
 	if (descriptor.type === 'number'){
 		var n = Number(input);
-		return (input.trim() === '' || isNaN(n)) ? { error: true } : n;
+		// Non-finite numbers (1e309, Infinity) survive JSON.stringify only as null and would
+		// silently corrupt the exported save, so refuse them outright.
+		return (input.trim() === '' || !isFinite(n)) ? { error: true } : n;
 	}
 	if (input === '') return null;
 	var nn = Number(input);
-	return (input.trim() !== '' && !isNaN(nn)) ? nn : input;
+	return (input.trim() !== '' && isFinite(nn)) ? nn : input;
+}
+
+// Game levels and prestiges are non-negative integers; anything else desyncs cost math.
+function isNonNegInt(v){ return typeof v === 'number' && isFinite(v) && v >= 0 && Math.floor(v) === v; }
+
+// Any successful edit makes previously generated output stale. Clear the export code (it no
+// longer matches the save) and remember that a shown JSON snapshot is out of date.
+var jsonStale = false;
+var applyJsonArmed = false;
+function invalidateOutputs(){
+	var out = document.getElementById('exportBox');
+	if (out && out.value) out.value = '';
+	var jb = document.getElementById('jsonBox');
+	if (jb && jb.value) jsonStale = true;
+	applyJsonArmed = false;
 }
 
 // If the auto-synced partner field is currently rendered, reflect its new value in its control.
@@ -137,30 +167,99 @@ function onFieldChange(e){
 	var d = leafByPath[el.getAttribute('data-path')];
 	if (!d) return;
 	var val = coerce(d, el.value, el.checked);
-	if (val && val.error){ setStatus('"' + d.path + '" needs a number. Not changed.'); return; }
-	setByTokens(d.tokens, val);
+	if (val && val.error){ setStatus('"' + d.path + '" needs a plain finite number. Not changed.'); return; }
+	var oldVal = readByTokens(d.tokens);
 	var shown = (d.type === 'boolean') ? val : JSON.stringify(val);
+	var k = d.smart.kind;
 
-	if (d.smart.kind === 'perkLevel'){
+	// Linked kinds validate BEFORE committing: an edit lands with its full engine-equivalent
+	// side effects or not at all — never a half-applied pair.
+	if ((k === 'perkLevel' || k === 'equipLevel' || k === 'equipPrestige') && !isNonNegInt(Number(val))){
+		el.value = String(oldVal);
+		setStatus(d.path + ' must be a whole number of 0 or more (game levels are integers). Not changed.');
+		return;
+	}
+
+	if (k === 'perkLevel'){
 		var spent = perkSpentForLevel(d.smart.perk, Number(val));
 		if (!isFinite(spent)){
-			setStatus('Set ' + d.path + ' = ' + shown + '. WARNING: that level is too high to compute a finite ' + d.smart.spentField + '; it was left unchanged, so respec math may be off.');
+			el.value = String(oldVal);
+			setStatus(d.path + ': that level is too high to compute a finite ' + d.smart.spentField + ', which would corrupt respec math. Not changed.');
 			return;
 		}
-		var sp = leafByPath[d.smart.spentPath];
-		if (sp){ setByTokens(sp.tokens, spent); refreshControl(d.smart.spentPath, spent); }
+		var perkObj = saveObj.portal && saveObj.portal[d.smart.perk];
+		if (!perkObj){
+			el.value = String(oldVal);
+			setStatus(d.path + ': could not find this perk in the save to keep ' + d.smart.spentField + ' in sync. Not changed.');
+			return;
+		}
+		setByTokens(d.tokens, val);
+		var hadKey = (typeof perkObj[d.smart.spentField] !== 'undefined');
+		perkObj[d.smart.spentField] = spent;
+		if (!hadKey) flatten(saveObj); // brand-new leaf: re-index so it is searchable
+		refreshControl(d.smart.spentPath, spent);
+		invalidateOutputs();
 		setStatus('Set ' + d.path + ' = ' + shown + '. Auto-updated ' + d.smart.spentField + ' to ' + spent + ' so respec and helium totals stay correct.');
 		return;
 	}
-	if (d.smart.kind === 'derived'){
+
+	if (k === 'equipLevel'){
+		// Replicate the engine's levelEquipment bookkeeping: army stat totals are running
+		// accumulators, so a level change of dL must add calculated*dL to global[stat] and
+		// global.difs[stat] (verified bit-identical to engine leveling).
+		var eq = saveObj.equipment && saveObj.equipment[d.smart.equip];
+		var stat = eq ? (eq.blockNow ? 'block' : (typeof eq.health !== 'undefined' ? 'health' : 'attack')) : null;
+		var calc = eq ? eq[stat + 'Calculated'] : null;
+		var okShape = eq && typeof calc === 'number' && saveObj.global && typeof saveObj.global[stat] === 'number'
+			&& saveObj.global.difs && typeof saveObj.global.difs[stat] === 'number';
+		if (!okShape){
+			el.value = String(oldVal);
+			setStatus(d.path + ': this save is missing the fields needed to adjust your total ' + (stat || 'stat') + ' the way in-game leveling would. Not changed.');
+			return;
+		}
+		var adj = calc * (Number(val) - Number(oldVal));
+		if (!isFinite(adj) || !isFinite(saveObj.global[stat] + adj)){
+			el.value = String(oldVal);
+			setStatus(d.path + ': that level change overflows your total ' + stat + ' beyond what the save format can hold. Not changed.');
+			return;
+		}
+		setByTokens(d.tokens, val);
+		saveObj.global[stat] += adj;
+		saveObj.global.difs[stat] += adj;
+		refreshControl('global.' + stat, saveObj.global[stat]);
+		invalidateOutputs();
+		setStatus('Set ' + d.path + ' = ' + shown + '. Auto-adjusted your total ' + stat + ' by ' + adj + ' to match, exactly as leveling in-game would.');
+		return;
+	}
+
+	if (k === 'equipPrestige'){
+		setByTokens(d.tokens, val);
+		invalidateOutputs();
+		if (Number(val) <= 1){
+			setStatus('Set ' + d.path + ' = ' + shown + '. Warning: the game only recomputes equipment stats on load for prestige 2 and up, so at prestige ' + val + ' the old calculated stats remain as saved.');
+		} else {
+			setStatus('Set ' + d.path + ' = ' + shown + '. Nothing else to change: on load the game recomputes this equipment’s stats and cost from prestige and rebalances your totals automatically.');
+		}
+		return;
+	}
+
+	// Remaining kinds commit directly.
+	setByTokens(d.tokens, val);
+	invalidateOutputs();
+
+	if (k === 'blockNow'){
+		setStatus('Set ' + d.path + ' = ' + shown + '. Warning: Shield block-vs-health routing is tied to the Blockmaster upgrade, and the contribution of already-bought levels is NOT migrated between health and block by this edit.');
+		return;
+	}
+	if (k === 'derived'){
 		setStatus('Set ' + d.path + ' = ' + shown + '. Heads up: this value is recomputed by the game, so the edit likely will not stick.');
 		return;
 	}
-	if (d.smart.kind === 'zone'){
+	if (k === 'zone'){
 		setStatus('Set ' + d.path + ' = ' + shown + '. Warning: the saved enemy grid is for your old zone. Jumping zones this way can desync the grid; advancing in-game is safer.');
 		return;
 	}
-	if (d.smart.kind === 'jobOwned'){
+	if (k === 'jobOwned' || k === 'popCheck'){
 		var pop = jobsPlusSoldiers();
 		var owned = readByTokens(['resources', 'trimps', 'owned']);
 		if (typeof owned === 'number' && pop > owned){
@@ -204,11 +303,20 @@ function makeControl(d){
 
 function renderFields(list){
 	var box = document.getElementById('fieldList');
+	// A debounced re-render can land while the user is focused on a result control, which
+	// would drop NVDA focus to the body. Remember the focused field and restore it after.
+	var active = document.activeElement;
+	var focusPath = (active && box.contains(active)) ? active.getAttribute('data-path') : null;
 	box.innerHTML = '';
 	var frag = document.createDocumentFragment();
 	var shown = Math.min(list.length, MAX_RESULTS);
 	for (var i = 0; i < shown; i++) frag.appendChild(makeControl(list[i]));
 	box.appendChild(frag);
+	if (focusPath){
+		var again = box.querySelector('[data-path="' + focusPath + '"]');
+		if (again) again.focus();
+		else document.getElementById('searchBox').focus();
+	}
 	var count = document.getElementById('resultCount');
 	if (list.length === 0) count.textContent = 'No fields match.';
 	else if (list.length > shown) count.textContent = 'Showing ' + shown + ' of ' + list.length + ' fields. Refine your search to narrow it.';
@@ -257,6 +365,10 @@ function onDecode(){
 	buildSectionButtons();
 	document.getElementById('editorSections').hidden = false;
 	document.getElementById('searchBox').value = '';
+	document.getElementById('exportBox').value = '';
+	document.getElementById('jsonBox').value = '';
+	jsonStale = false;
+	applyJsonArmed = false;
 	renderFields(commonList());
 	setStatus('Save decoded. Zone ' + (obj.global.world != null ? obj.global.world : '?') + ', version ' + (obj.global.stringVersion || '?') + '. ' + leaves.length + ' editable values. Search to find any of them.');
 	var h = document.getElementById('editHeading');
@@ -271,20 +383,30 @@ function onEncode(){
 
 function onCopy(){
 	var out = document.getElementById('exportBox');
-	if (!out.value){ setStatus('Nothing to copy yet. Press Encode first.'); return; }
+	if (!out.value){ setStatus('Nothing to copy yet. Press Encode first (or re-Encode after your latest edits).'); return; }
 	out.select();
 	var done = function(){ setStatus('New save code copied to clipboard.'); };
-	if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(out.value).then(done, function(){ document.execCommand('copy'); done(); });
-	else { document.execCommand('copy'); done(); }
+	var failed = function(){ setStatus('Copy failed in this browser. The code is selected in the export box below — copy it manually with Control+C.'); };
+	if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(out.value).then(done, function(){ document.execCommand('copy') ? done() : failed(); });
+	else { document.execCommand('copy') ? done() : failed(); }
 }
 
 function onShowJson(){
 	if (!saveObj){ setStatus('Decode a save first.'); return; }
 	document.getElementById('jsonBox').value = JSON.stringify(saveObj, null, 2);
+	jsonStale = false;
+	applyJsonArmed = false;
 	setStatus('Full JSON loaded below. Edit it, then press Apply JSON.');
 }
 
 function onApplyJson(){
+	// If field edits happened after the JSON snapshot was shown, applying it would silently
+	// roll them back. Require a second press so the overwrite is deliberate.
+	if (jsonStale && !applyJsonArmed){
+		applyJsonArmed = true;
+		setStatus('Warning: you have made edits since this JSON was shown, and applying it will overwrite them. Press Apply JSON again to do that anyway, or press Show JSON to refresh the snapshot first.');
+		return;
+	}
 	var obj;
 	try { obj = JSON.parse(document.getElementById('jsonBox').value); }
 	catch (e){ setStatus('That JSON is not valid, so nothing was applied: ' + e.message); return; }
@@ -293,6 +415,10 @@ function onApplyJson(){
 	flatten(saveObj);
 	buildSectionButtons();
 	runSearch();
+	jsonStale = false;
+	applyJsonArmed = false;
+	var out = document.getElementById('exportBox');
+	if (out) out.value = '';
 	setStatus('Save replaced from JSON. ' + leaves.length + ' editable values.');
 }
 

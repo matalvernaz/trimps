@@ -23,7 +23,7 @@
 
 <p class="warn"><strong>Back up first.</strong> Copy your current Export code somewhere safe before importing an edited one, so you can restore if something goes wrong.</p>
 
-<p id="status" role="status" aria-live="assertive">Paste a save and press Decode to begin.</p>
+<p id="status" role="status" aria-live="polite">Paste a save and press Decode to begin.</p>
 
 <h2>1. Paste your save code</h2>
 <label for="importBox">Exported Trimps save code</label><br>
@@ -34,7 +34,8 @@
 	<h2 id="editHeading" tabindex="-1">2. Find and edit values</h2>
 	<p>Type part of a field name or path to find it. Some fields carry a note:</p>
 	<ul>
-		<li><strong>linked</strong>: editing a perk's level automatically recomputes its spent helium or radon, so respec stays correct.</li>
+		<li><strong>linked</strong>: editing a perk's level automatically recomputes its spent helium or radon, and editing an equipment level automatically adjusts your army attack or health totals — both exactly as the game itself would.</li>
+		<li><strong>equipment prestige</strong> is safe to edit alone: the game recomputes that equipment's stats and cost from prestige when the save loads.</li>
 		<li><strong>derived</strong>: the game recomputes this on load, so your edit will not stick. Edit the source field instead.</li>
 		<li><strong>warnings</strong>: changing your zone leaves a stale enemy grid, and over-filling jobs past your population is flagged when you edit.</li>
 	</ul>
