@@ -36,7 +36,7 @@
 		If you are not using any addons that might interfere with javascript, try using the latest versions of Chrome or Firefox. 
 	</div>
 	</noscript>
-	<div id="screenReaderInfo" class="visually-hidden">
+	<div id="screenReaderInfo" style="padding: 4px; border: 1px solid; margin: 4px;">
 		<h6>Screen Reader Information</h6>
 		This game uses several different ways to show additional information in tooltips.<br>
 		shift+/ will work on all elements, but requires focus, and specific NVDA settings. All elements with additional information are focusable with tab.<br>
@@ -45,6 +45,7 @@
 		To enable shift+/ tooltips, Turn NVDA + 8 on, and disable NVDA: Settings > browse mode: Disable "trap all command gestures from reaching the document."<br>
 		You can show/hide this information via the game setting "Show Screen Read Info."<br>
 		A "Read Status" button near the top of the page speaks your full current status (zone, army, resources, last combat). Activate it, or press Enter on it repeatedly, to poll your state at any time without navigating the summary table.<br>
+		<button id="srInfoDismissBtn" onclick="dismissSRInfo()">Dismiss this information</button>
 	</div>
 	<div id="srStatusBar" style="padding: 4px;">
 		<button id="srReadStatusBtn" onclick="screenReaderStatus()">Read Status</button>
@@ -1541,6 +1542,22 @@
 	<script type="text/javascript" src="playerSpire.js?62"></script>
 	<script type="text/javascript" src="objects.js?62"></script>
 	<script type="text/javascript" src="main.js?62"></script>
+	<script>
+	// Dismiss the info block through the game's own showSRInfo setting so the choice is
+	// saved with the game and reversible from Settings.
+	function dismissSRInfo(){
+		if (typeof game !== 'undefined' && game.options && game.options.menu.showSRInfo){
+			game.options.menu.showSRInfo.enabled = 0;
+			game.options.menu.showSRInfo.onToggle();
+		} else {
+			var elem = document.getElementById('screenReaderInfo');
+			if (elem) elem.style.display = 'none';
+		}
+		if (typeof screenReaderAssert === 'function') screenReaderAssert('Screen reader information dismissed. Turn it back on any time with the game setting named Show Screen Read Info.');
+		var rs = document.getElementById('srReadStatusBtn');
+		if (rs) rs.focus();
+	}
+	</script>
 	<script>
 	// AutoTrimps opt-in loader. Strictly optional: nothing loads unless the player enables it,
 	// the choice is per-device (localStorage), and disabling reloads the page since the script
