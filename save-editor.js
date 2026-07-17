@@ -434,18 +434,20 @@ function makeControl(d){
 	wrap.className = 'field';
 	var id = 'f_' + d.path.replace(/[^a-zA-Z0-9]/g, '_');
 	var hint = d.smart.hint || '';
+	// Category views pass a friendly label; the raw path still rides along for search users.
+	var shownName = d.label ? d.label + ' (' + d.path + ')' : d.path;
 	if (d.type === 'boolean'){
 		var cb = document.createElement('input');
 		cb.type = 'checkbox'; cb.id = id; cb.checked = !!current;
 		cb.setAttribute('data-path', d.path);
 		cb.addEventListener('change', onFieldChange);
 		var labCb = document.createElement('label');
-		labCb.setAttribute('for', id); labCb.textContent = ' ' + d.path + hint;
+		labCb.setAttribute('for', id); labCb.textContent = ' ' + shownName + hint;
 		wrap.appendChild(cb); wrap.appendChild(labCb);
 	} else {
 		var lab = document.createElement('label');
 		lab.setAttribute('for', id);
-		lab.textContent = d.path + (d.type === 'null' ? ' (currently empty)' : '') + hint;
+		lab.textContent = shownName + (d.type === 'null' ? ' (currently empty)' : '') + hint;
 		var input = document.createElement('input');
 		input.type = 'text'; input.id = id;
 		input.value = (current === null || current === undefined) ? '' : String(current);
@@ -481,6 +483,100 @@ function renderFields(list){
 	else count.textContent = 'Showing ' + shown + ' field' + (shown === 1 ? '' : 's') + '.';
 }
 
+// Curated browse categories: human-named groups so nothing requires knowing a field name.
+// `fixed` entries are [path, label]; `dynamic` sections generate one labeled entry per item
+// in the loaded save (perks, equipment, jobs, buildings, upgrades).
+var CATEGORIES = [
+	{ name: 'Progress', fixed: [
+		['global.world', 'Current zone'],
+		['global.lastClearedCell', 'Last cleared cell in this zone'],
+		['global.highestLevelCleared', 'Zone record (game shows this plus 1)'],
+		['global.totalPortals', 'Total portals used'],
+		['global.totalVoidMaps', 'Void maps held'] ] },
+	{ name: 'Helium and Radon', fixed: [
+		['global.totalHeliumEarned', 'Helium lifetime total (raising it adds spendable helium)'],
+		['global.heliumLeftover', 'Helium spendable now'],
+		['resources.helium.owned', 'Helium owned this run (pays out at next portal)'],
+		['global.totalRadonEarned', 'Radon lifetime total'],
+		['global.radonLeftover', 'Radon spendable now'],
+		['resources.radon.owned', 'Radon owned this run'] ] },
+	{ name: 'Resources', fixed: [
+		['resources.food.owned', 'Food'],
+		['resources.wood.owned', 'Wood'],
+		['resources.metal.owned', 'Metal'],
+		['resources.science.owned', 'Science'],
+		['resources.gems.owned', 'Gems'],
+		['resources.fragments.owned', 'Fragments'] ] },
+	{ name: 'Trimps and army', fixed: [
+		['resources.trimps.owned', 'Trimps population'],
+		['resources.trimps.soldiers', 'Soldiers fighting'],
+		['resources.trimps.maxSoldiers', 'Max soldiers (derived)'],
+		['global.attack', 'Army attack total (auto-managed by equipment edits)'],
+		['global.health', 'Army health total (auto-managed by equipment edits)'],
+		['global.block', 'Army block total'] ] },
+	{ name: 'Perks', dynamic: 'perks' },
+	{ name: 'Equipment', dynamic: 'equipment' },
+	{ name: 'Jobs', dynamic: 'jobs' },
+	{ name: 'Buildings', dynamic: 'buildings' },
+	{ name: 'Upgrades and features', dynamic: 'upgrades' },
+	{ name: 'Fluffy', fixed: [
+		['global.fluffyExp', 'Fluffy experience'],
+		['global.fluffyPrestige', 'Fluffy prestige'] ] }
+];
+
+// Turn a category into labeled descriptors for renderFields. Labels ride on shallow copies so
+// leafByPath (used by change handlers) keeps the canonical descriptor.
+function categoryFields(cat){
+	var out = [];
+	function add(path, label){
+		var d = leafByPath[path];
+		if (d) out.push(Object.assign({}, d, { label: label }));
+	}
+	if (cat.fixed) for (var i = 0; i < cat.fixed.length; i++) add(cat.fixed[i][0], cat.fixed[i][1]);
+	if (!cat.dynamic || !saveObj) return out;
+	var names;
+	if (cat.dynamic === 'perks' && saveObj.portal){
+		names = Object.keys(saveObj.portal).sort();
+		for (var p = 0; p < names.length; p++){
+			var perk = saveObj.portal[names[p]];
+			if (!perk || typeof perk !== 'object') continue;
+			var nice = names[p].replace('_', ' ');
+			if (typeof perk.level === 'number') add('portal.' + names[p] + '.level', nice + ' perk level');
+			if (typeof perk.radLevel === 'number') add('portal.' + names[p] + '.radLevel', nice + ' perk radon level');
+		}
+	}
+	else if (cat.dynamic === 'equipment' && saveObj.equipment){
+		names = Object.keys(saveObj.equipment).sort();
+		for (var e = 0; e < names.length; e++){
+			add('equipment.' + names[e] + '.level', names[e] + ' level');
+			add('equipment.' + names[e] + '.prestige', names[e] + ' prestige');
+			add('equipment.' + names[e] + '.locked', names[e] + ' locked (0 = owned)');
+		}
+	}
+	else if (cat.dynamic === 'jobs' && saveObj.jobs){
+		names = Object.keys(saveObj.jobs).sort();
+		for (var j = 0; j < names.length; j++){
+			add('jobs.' + names[j] + '.owned', names[j] + ' count');
+			add('jobs.' + names[j] + '.locked', names[j] + ' locked (0 = available)');
+		}
+	}
+	else if (cat.dynamic === 'buildings' && saveObj.buildings){
+		names = Object.keys(saveObj.buildings).sort();
+		for (var b = 0; b < names.length; b++){
+			add('buildings.' + names[b] + '.owned', names[b] + ' count');
+			add('buildings.' + names[b] + '.locked', names[b] + ' locked (0 = available)');
+		}
+	}
+	else if (cat.dynamic === 'upgrades' && saveObj.upgrades){
+		names = Object.keys(saveObj.upgrades).sort();
+		for (var u = 0; u < names.length; u++){
+			var up = saveObj.upgrades[names[u]];
+			if (up && typeof up === 'object' && typeof up.done === 'number') add('upgrades.' + names[u] + '.done', names[u] + ' purchased (count)');
+		}
+	}
+	return out;
+}
+
 // Empty-search view: the values people edit most, when they exist in the loaded save.
 var COMMON_PATHS = [
 	'global.world', 'global.lastClearedCell', 'global.highestLevelCleared', 'global.totalPortals',
@@ -513,6 +609,24 @@ function buildSectionButtons(){
 	});
 }
 
+function showCategory(cat){
+	document.getElementById('searchBox').value = '';
+	renderFields(categoryFields(cat));
+	var count = document.getElementById('resultCount');
+	count.textContent = cat.name + ': ' + count.textContent;
+}
+
+function buildCategoryButtons(){
+	var box = document.getElementById('categoryButtons');
+	box.innerHTML = '';
+	CATEGORIES.forEach(function(cat){
+		var b = document.createElement('button');
+		b.type = 'button'; b.textContent = cat.name;
+		b.addEventListener('click', function(){ showCategory(cat); });
+		box.appendChild(b); box.appendChild(document.createTextNode(' '));
+	});
+}
+
 function onDecode(){
 	var obj = decodeSave(document.getElementById('importBox').value);
 	if (!obj || typeof obj !== 'object' || !obj.global){
@@ -522,6 +636,7 @@ function onDecode(){
 	saveObj = obj;
 	flatten(saveObj);
 	buildSectionButtons();
+	buildCategoryButtons();
 	document.getElementById('editorSections').hidden = false;
 	document.getElementById('searchBox').value = '';
 	document.getElementById('exportBox').value = '';
@@ -573,6 +688,7 @@ function onApplyJson(){
 	saveObj = obj;
 	flatten(saveObj);
 	buildSectionButtons();
+	buildCategoryButtons();
 	runSearch();
 	jsonStale = false;
 	applyJsonArmed = false;
