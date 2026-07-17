@@ -48,6 +48,8 @@
 	</div>
 	<div id="srStatusBar" style="padding: 4px;">
 		<button id="srReadStatusBtn" onclick="screenReaderStatus()">Read Status</button>
+		<button id="atToggleBtn" onclick="atToggle()">Enable AutoTrimps automation (optional)</button>
+		<a href="tools/">Trimps tools</a>
 	</div>
 	<div id="offlineWrapper">
 		<div id="offlineInnerWrapper">
@@ -1539,6 +1541,42 @@
 	<script type="text/javascript" src="playerSpire.js?62"></script>
 	<script type="text/javascript" src="objects.js?62"></script>
 	<script type="text/javascript" src="main.js?62"></script>
+	<script>
+	// AutoTrimps opt-in loader. Strictly optional: nothing loads unless the player enables it,
+	// the choice is per-device (localStorage), and disabling reloads the page since the script
+	// cannot cleanly unload. Loads from our fork so accessibility fixes ride along.
+	(function(){
+		var KEY = 'atOptIn';
+		var SRC = 'https://matalvernaz.github.io/AutoTrimps/AutoTrimps2.js';
+		function optedIn(){ try { return localStorage.getItem(KEY) === '1'; } catch (e){ return false; } }
+		function inject(){
+			var s = document.createElement('script');
+			s.src = SRC;
+			document.head.appendChild(s);
+		}
+		function refreshBtn(){
+			var b = document.getElementById('atToggleBtn');
+			if (b) b.textContent = optedIn() ? 'Disable AutoTrimps automation (reloads page)' : 'Enable AutoTrimps automation (optional)';
+		}
+		window.atToggle = function(){
+			try {
+				if (optedIn()){
+					localStorage.setItem(KEY, '0');
+					location.reload();
+					return;
+				}
+				localStorage.setItem(KEY, '1');
+				inject();
+				refreshBtn();
+				if (typeof screenReaderAssert === 'function') screenReaderAssert('AutoTrimps enabled and loading. It stays on for this device until you press this button again; disabling reloads the page.');
+			} catch (e){}
+		};
+		window.addEventListener('DOMContentLoaded', function(){
+			refreshBtn();
+			if (optedIn()) inject();
+		});
+	})();
+	</script>
 	
 </body>
 

@@ -24,6 +24,24 @@ services:
       - traefik.http.routers.trimps.tls.domains[0].sans=www.trimps.thealvernaz.space
       - traefik.http.services.trimps.loadbalancer.server.port=80
 
+  spire:
+    build: ./spire-server
+    container_name: trimps-spire
+    restart: unless-stopped
+    networks:
+      - traefik
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.trimps-spire.rule=Host(`trimps.thealvernaz.space`) && PathPrefix(`/tools/spire`)"
+      - traefik.http.routers.trimps-spire.entrypoints=websecure
+      - traefik.http.routers.trimps-spire.middlewares=www-to-nonwww@file
+      - traefik.http.routers.trimps-spire.tls=true
+      - traefik.http.routers.trimps-spire.tls.certresolver=le-dns
+      - traefik.http.routers.trimps-spire.tls.domains[0].main=trimps.thealvernaz.space
+      - traefik.http.routers.trimps-spire.tls.domains[0].sans=www.trimps.thealvernaz.space
+      - traefik.http.routers.trimps-spire.priority=110
+      - traefik.http.services.trimps-spire.loadbalancer.server.port=8080
+
 networks:
   traefik:
     external: true
