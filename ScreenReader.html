@@ -1599,9 +1599,28 @@
 			if (typeof screenReaderAssert === 'function') screenReaderAssert('AutoTrimps hit an error and has been disabled. Reload the page to get back to a clean game. Error: ' + (e.message || 'unknown'));
 			refreshBtn();
 		});
+		// AutoTrimps no-ops the game loop while its modules load. If it never finishes
+		// (hung script, dead network), the game stays frozen with no error — so watchdog:
+		// after 60s, restore the loop, disable the opt-in, and say so.
+		var AT_LOAD_DEADLINE_MS = 60000;
+		function armWatchdog(){
+			var realGameLoop = window.gameLoop;
+			setTimeout(function(){
+				var loaded = false;
+				try { loaded = (typeof atConfig !== 'undefined') && atConfig.initialise.loaded === true; } catch (e){}
+				if (loaded || atFailed) return;
+				atFailed = true;
+				try { localStorage.setItem(KEY, '0'); } catch (e){}
+				if (typeof window.gameLoop === 'function' && String(window.gameLoop).length < 60 && typeof realGameLoop === 'function'){
+					window.gameLoop = realGameLoop;
+				}
+				if (typeof screenReaderAssert === 'function') screenReaderAssert('AutoTrimps did not finish loading within a minute and has been disabled. The game has been unfrozen; reload the page for a clean start.');
+				refreshBtn();
+			}, AT_LOAD_DEADLINE_MS);
+		}
 		window.addEventListener('DOMContentLoaded', function(){
 			refreshBtn();
-			if (optedIn()) inject();
+			if (optedIn()){ inject(); armWatchdog(); }
 		});
 	})();
 	</script>
