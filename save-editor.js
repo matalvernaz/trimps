@@ -42,37 +42,137 @@ var saveObj = null;      // canonical decoded save; controls read from and write
 var leaves = [];         // [{path, tokens, type, smart}] one per editable scalar/null value
 var leafByPath = {};     // path -> descriptor
 
-// Zone-jump unlock template, derived by diffing a real zone-444 save against a fresh game.
-// Each entry lists what a natural playthrough has by the given zone. Only one-shot feature
-// unlocks are included: repeatable upgrades (Coordination, prestiges) would warp balance if
-// copied, challenge-completion flags are earned bonuses, and per-run state doesn't belong.
-// Thresholds are exact where the engine gates them (Formations 60, Dominance 70, Barrier 80)
-// and approximate for the late tier (230); a jump to a high zone gets everything either way.
+// Zone-jump unlock data comes from two sources.
+//
+// game.worldUnlocks (the game's config.js, loaded by save-editor.html) is the engine's own
+// drop table for world-grid books: one-shot feature books (Miners, Dominance, ...) and
+// repeatable books on a zone cadence (TrainTacular every 5th zone, Coordination every zone,
+// Gigastation in banded tiers, ...). applyWorldUnlockDrops mirrors the engine's scheduling
+// rules (main.js addSpecials) against that table, so game updates are picked up without
+// editing this file. One-shot books are marked owned (done=1) along with the job/building
+// their purchase would have unlocked; repeatable books only raise `allowed` — how many the
+// game lets you buy — because buying runs fire() side effects (TrainTacular bumps the
+// Trainer modifier, Coordination scales the army) that a save edit can't replicate. Without
+// the allowed bump those books are permanently missable: the engine only drops them on
+// their exact zones and buyUpgrade re-locks at done >= allowed.
+//
+// ZONE_UNLOCKS below hand-covers only what lives outside that table: tutorial and engine-
+// hardcoded flags, early world-grid equipment (those specials carry no fire() to parse),
+// map-found books and buildings (kept lumped at the old zone-60 tier — map books re-drop at
+// any map level, so they're recoverable in-game below that), and the zone-230 magma set.
+// Repeatable purchases (done counts) are never copied, challenge-completion flags are
+// earned bonuses, and per-run state doesn't belong.
 var ZONE_UNLOCKS = [
+	{ zone: 6,
+		upgrades: ['Battle'],
+		jobs: ['Farmer', 'Lumberjack'],
+		buildings: ['Trap'],
+		equipment: ['Shield', 'Dagger', 'Boots', 'Mace', 'Helmet', 'Polearm', 'Pants', 'Battleaxe', 'Shoulderguards', 'Greatsword', 'Breastplate'],
+		globals: ['trapBuildAllowed'] },
+	{ zone: 7, globals: ['mapsUnlocked'] },
+	{ zone: 16, upgrades: ['Trapstorm', 'Bounty'] },
 	{ zone: 20, globals: ['portalActive'] },
 	{ zone: 60,
-		upgrades: ['Battle', 'Bloodlust', 'Blockmaster', 'Trapstorm', 'Bounty', 'Anger', 'Formations', 'Miners', 'Scientists', 'Trainers', 'Explorers'],
-		jobs: ['Farmer', 'Lumberjack', 'Miner', 'Scientist', 'Trainer', 'Explorer', 'Geneticist'],
-		buildings: ['Trap', 'Barn', 'Shed', 'Forge', 'Hut', 'House', 'Mansion', 'Hotel', 'Resort', 'Gateway', 'Wormhole', 'Collector', 'Warpstation', 'Gym', 'Tribute', 'Nursery'],
-		equipment: ['Shield', 'Dagger', 'Boots', 'Mace', 'Helmet', 'Polearm', 'Pants', 'Battleaxe', 'Shoulderguards', 'Greatsword', 'Breastplate', 'Arbalest', 'Gambeson'],
-		globals: ['brokenPlanet', 'mapsUnlocked', 'trapBuildAllowed', 'autoUpgradesAvailable', 'autoUpgrades', 'autoStorageAvailable', 'autoStorage', 'Geneticistassist'] },
-	{ zone: 70, upgrades: ['Dominance'] },
-	{ zone: 80, upgrades: ['Barrier'] },
-	{ zone: 230,
-		upgrades: ['Magmamancers', 'UberHut', 'UberHouse', 'UberMansion', 'UberHotel', 'UberResort'],
-		jobs: ['Magmamancer'] }
+		upgrades: ['Formations'],
+		buildings: ['Barn', 'Shed', 'Forge', 'Hut', 'House', 'Mansion', 'Hotel', 'Resort', 'Gateway', 'Wormhole', 'Collector', 'Nursery'],
+		equipment: ['Arbalest', 'Gambeson'],
+		globals: ['brokenPlanet', 'autoUpgradesAvailable', 'autoUpgrades', 'autoStorageAvailable', 'autoStorage', 'Geneticistassist'] },
+	{ zone: 230, upgrades: ['UberHut', 'UberHouse', 'UberMansion', 'UberHotel', 'UberResort'] }
 ];
 
+// The unlockUpgrade("X") / unlockJob("X") / unlockBuilding("X") call inside a fire() body —
+// how a worldUnlocks book names what it grants.
+var UNLOCK_CALL = /unlock(Upgrade|Job|Building)\(\s*["']([^"']+)/;
+
+function unlockOne(section, name, changed){
+	var o = saveObj[section] && saveObj[section][name];
+	if (o && typeof o === 'object' && o.locked){ o.locked = 0; changed.push(section + '.' + name); }
+}
+
+// How many books of this special a full clear of zones 1..targetZone-1 collects (the jump
+// lands at the target zone's start, so its own cells are uncleared). Cadence mirrors main.js
+// addSpecials: positive world = that exact zone; negative = repeating (-1 every zone, -2
+// even, -3 odd, -5/-33/-10/-20/-25 every 5th/3rd/10th/20th/25th), bounded by startAt/lastAt
+// and the universe block flags.
+function naturalDropCount(special, targetZone, universe){
+	if (universe === 2 && special.blockU2) return 0;
+	if (universe !== 2 && special.blockU1) return 0;
+	var first = (typeof special.startAt === 'number') ? special.startAt : 1;
+	var last = targetZone - 1;
+	if (typeof special.lastAt === 'number' && special.lastAt < last) last = special.lastAt;
+	if (last < first) return 0;
+	function multiplesOf(m){ return Math.floor(last / m) - Math.floor((first - 1) / m); }
+	var w = special.world, count = 0;
+	if (w > 0) count = (w >= first && w <= last) ? 1 : 0;
+	else if (w === -1) count = last - first + 1;
+	else if (w === -2) count = multiplesOf(2);
+	else if (w === -3) count = (last - first + 1) - multiplesOf(2);
+	else if (w === -5) count = multiplesOf(5);
+	else if (w === -33) count = multiplesOf(3);
+	else if (w === -10) count = multiplesOf(10);
+	else if (w === -20) count = multiplesOf(20);
+	else if (w === -25) count = multiplesOf(25);
+	if (special.canRunOnce && count > 1) count = 1;
+	return count;
+}
+
+// Grant everything game.worldUnlocks would have dropped by targetZone. Returns false when
+// config.js isn't loaded (editor opened away from the game folder) so the caller can warn.
+function applyWorldUnlockDrops(targetZone, changed){
+	if (typeof game === 'undefined' || !game.worldUnlocks) return false;
+	var universe = (saveObj.global && saveObj.global.universe === 2) ? 2 : 1;
+	var drops = {}; // upgrade -> {count, repeatable}; summed across specials (Gigastation has 5 tiers)
+	for (var item in game.worldUnlocks){
+		try {
+			var sp = game.worldUnlocks[item];
+			if (item === 'Foreman'){
+				// No unlock call — each Foreman book does game.global.autoCraftModifier += 0.25.
+				var mod = naturalDropCount(sp, targetZone, universe) * 0.25;
+				if (saveObj.global && (saveObj.global.autoCraftModifier || 0) < mod){
+					saveObj.global.autoCraftModifier = mod;
+					changed.push('global.autoCraftModifier');
+				}
+				continue;
+			}
+			var m = String(sp.fire || '').match(UNLOCK_CALL);
+			if (!m) continue; // loot drops, unique-map openers, the easter egg
+			if (sp.locked) continue;
+			var n = naturalDropCount(sp, targetZone, universe);
+			if (!n) continue;
+			if (m[1] === 'Upgrade'){
+				var d = drops[m[2]] || (drops[m[2]] = { count: 0, repeatable: false });
+				d.count += n;
+				if (sp.world < 0 && !sp.canRunOnce) d.repeatable = true;
+			}
+			else unlockOne(m[1] === 'Job' ? 'jobs' : 'buildings', m[2], changed);
+		} catch (e){} // holiday entries gate `locked` behind getters that need main.js; skip them
+	}
+	for (var name in drops){
+		var up = saveObj.upgrades && saveObj.upgrades[name];
+		if (!up || typeof up !== 'object') continue;
+		var touched = false;
+		if (up.locked){ up.locked = 0; touched = true; }
+		if (!(up.allowed >= drops[name].count)){ up.allowed = drops[name].count; touched = true; }
+		if (!drops[name].repeatable && !up.done){
+			up.done = 1;
+			touched = true;
+			// A real purchase runs the upgrade's own fire(); grant the job/building it unlocks.
+			var src = game.upgrades[name] ? String(game.upgrades[name].fire || '') : '';
+			var chainRe = /unlock(Job|Building)\(\s*["']([^"']+)/g, cm;
+			while ((cm = chainRe.exec(src))) unlockOne(cm[1] === 'Job' ? 'jobs' : 'buildings', cm[2], changed);
+		}
+		if (touched) changed.push('upgrades.' + name);
+	}
+	return true;
+}
+
 // Apply everything a natural run would have by targetZone. Only ever unlocks — never locks,
-// never lowers done counts — so jumping below your progress is a no-op for flags.
+// never lowers done or allowed counts — so jumping below your progress is a no-op for flags.
 function applyZoneJump(targetZone){
 	var changed = [];
 	function unlockIn(section, names){
 		if (!saveObj[section]) return;
-		for (var i = 0; i < names.length; i++){
-			var o = saveObj[section][names[i]];
-			if (o && typeof o === 'object' && o.locked){ o.locked = 0; changed.push(section + '.' + names[i]); }
-		}
+		for (var i = 0; i < names.length; i++) unlockOne(section, names[i], changed);
 	}
 	for (var t = 0; t < ZONE_UNLOCKS.length; t++){
 		var tier = ZONE_UNLOCKS[t];
@@ -94,25 +194,29 @@ function applyZoneJump(targetZone){
 			}
 		}
 	}
+	var derived = applyWorldUnlockDrops(targetZone, changed);
 	saveObj.global.world = targetZone;
 	saveObj.global.lastClearedCell = -1; // zone start, matching the engine's nextWorld reset
 	if (typeof saveObj.global.highestLevelCleared === 'number' && saveObj.global.highestLevelCleared < targetZone - 1)
 		saveObj.global.highestLevelCleared = targetZone - 1;
-	return changed;
+	return { changed: changed, derived: derived };
 }
 
 function onZoneJump(){
 	if (!saveObj){ setStatus('Decode a save first.'); return; }
 	var z = Number(document.getElementById('jumpZoneInput').value);
 	if (!isNonNegInt(z) || z < 1){ setStatus('Jump zone must be a whole number of 1 or more.'); return; }
-	var changed = applyZoneJump(z);
+	var result = applyZoneJump(z);
+	var changed = result.changed;
 	flatten(saveObj);
 	runSearch();
 	invalidateOutputs();
 	setStatus('Jumped to zone ' + z + '. Set world, cell, and zone record, and applied ' + changed.length +
-		' unlock' + (changed.length === 1 ? '' : 's') + ' a natural run would have by now' +
-		(changed.length ? ' (portal, features, jobs, buildings, equipment as applicable)' : '') +
-		'. The current zone still uses the old enemy grid until you finish it. Repeatable upgrades like Coordination are not granted; buy them in-game with edited resources.');
+		' unlock' + (changed.length === 1 ? '' : 's') + ' a natural run would have by now. ' +
+		'Repeatable book upgrades (Coordination, TrainTacular, Gigastation, ...) are made buyable rather than auto-bought — ' +
+		'purchase them in-game with edited resources; Coordination also needs trimp housing. ' +
+		'The current zone still uses the old enemy grid until you finish it.' +
+		(result.derived ? '' : ' WARNING: config.js did not load, so only baseline unlocks were applied. Open the editor from the game folder for the full set.'));
 }
 
 function setStatus(msg){ var el = document.getElementById('status'); if (el) el.textContent = msg; }

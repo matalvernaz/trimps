@@ -42,7 +42,7 @@
 	</ul>
 
 	<h3>Jump to zone</h3>
-	<p>Sets your current zone and zone record, and unlocks what a natural run would have by then: the portal, broken planet, formations, automation, all standard jobs, buildings, and equipment (Magmamancers and Uber housing from zone 230). It never removes anything, so jumping low is harmless. Repeatable upgrades like Coordination are not granted — buy them in-game after editing resources.</p>
+	<p>Sets your current zone and zone record, and unlocks what a natural run would have by then, read from the game's own drop tables: the portal, broken planet, formations, automation, jobs, buildings, equipment, foremen, and every one-shot feature book in either universe. Repeatable book upgrades (Coordination, TrainTacular, Efficiency, Gigastation, and the like) are made available to buy in the right quantities — purchase them in-game after editing resources; Coordination also needs trimp housing. It never removes anything, so jumping low is harmless.</p>
 	<label for="jumpZoneInput">Target zone</label>
 	<input id="jumpZoneInput" type="text" inputmode="numeric" autocomplete="off">
 	<button id="jumpZoneBtn" type="button">Jump</button>
@@ -77,6 +77,8 @@
 
 <script src="client-log.js"></script>
 <script src="lz-string.js"></script>
+<!-- The game's own data tables; the zone jump derives world-book unlocks from game.worldUnlocks. -->
+<script src="config.js"></script>
 <script src="save-editor.js"></script>
 </body>
 </html>
