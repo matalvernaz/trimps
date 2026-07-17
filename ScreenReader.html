@@ -1588,6 +1588,17 @@
 				if (typeof screenReaderAssert === 'function') screenReaderAssert('AutoTrimps enabled and loading. It stays on for this device until you press this button again; disabling reloads the page.');
 			} catch (e){}
 		};
+		// If AutoTrimps itself throws, self-disable so the next reload is a clean game —
+		// automation must never leave the player stuck with a broken page.
+		var atFailed = false;
+		window.addEventListener('error', function(e){
+			var from = (e.filename || '') + ' ' + (e.message || '');
+			if (atFailed || from.indexOf('AutoTrimps') === -1) return;
+			atFailed = true;
+			try { localStorage.setItem(KEY, '0'); } catch (err){}
+			if (typeof screenReaderAssert === 'function') screenReaderAssert('AutoTrimps hit an error and has been disabled. Reload the page to get back to a clean game. Error: ' + (e.message || 'unknown'));
+			refreshBtn();
+		});
 		window.addEventListener('DOMContentLoaded', function(){
 			refreshBtn();
 			if (optedIn()) inject();
