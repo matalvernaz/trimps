@@ -219,6 +219,212 @@ function onZoneJump(){
 		(result.derived ? '' : ' WARNING: config.js did not load, so only baseline unlocks were applied. Open the editor from the game folder for the full set.'));
 }
 
+// ---------- Quick actions ----------
+// One-step forms for the edits people actually open a save editor for: portal currency,
+// perk refunds, run resources, permanent currencies, Fluffy/Scruffy, challenge records.
+// Each apply* function commits its full linked-invariant patch atomically and returns a
+// message describing exactly what changed (or a refusal). Amounts only ever add; levels
+// and records only ever raise. DOM handlers (onQa*) stay thin so the logic is testable.
+
+// Fluffy/Scruffy leveling constants from main.js `Fluffy` (main.js is not loaded here, so
+// they're embedded like PERK_PARAMS): exp to BE level L = floor(first * 5^prestige *
+// (4^L - 1) / 3). U1 Fluffy caps at the 10-entry reward list and every level requires a
+// matching level of the Capable perk; U2 Scruffy caps at the 31-entry rewardsU2 list with
+// no Capable gate (Fluffy.getCapableLevel returns the list length in U2).
+var FLUFFY = { firstLevel: 1000, growth: 4, prestigeExpModifier: 5, maxLevelU1: 10, maxLevelU2: 31 };
+
+function fluffyExpForLevel(level, prestige){
+	var first = FLUFFY.firstLevel * Math.pow(FLUFFY.prestigeExpModifier, prestige || 0);
+	return Math.floor(first * ((Math.pow(FLUFFY.growth, level) - 1) / (FLUFFY.growth - 1)));
+}
+
+function applyAddCurrency(curName, n){
+	var cur = CURRENCIES[curName];
+	if (!saveObj.global) return 'This save has no global section; cannot add ' + curName + '.';
+	var lo = (typeof saveObj.global[cur.leftoverKey] === 'number') ? saveObj.global[cur.leftoverKey] : 0;
+	if (!isFinite(lo + n)) return 'That amount would overflow ' + cur.leftoverKey + ' beyond what the save format can hold. Not changed.';
+	saveObj.global[cur.leftoverKey] = lo + n;
+	var total = syncCurrencyTotal(cur);
+	return 'Added ' + n + ' ' + curName + ', spendable at View Perks right now. ' +
+		(total !== null ? 'Lifetime total auto-updated to ' + total + '.' : 'Could not sync ' + cur.totalKey + '; check it manually.');
+}
+
+// Refund mirrors the in-game respec identity: perk spending drops by the freed amount and
+// leftover rises by the same amount, so totalEarned stays constant and respec math holds.
+function applyRefundPerks(curName){
+	var cur = CURRENCIES[curName];
+	if (!saveObj.portal || !saveObj.global) return 'This save has no perks section to refund.';
+	var freed = 0, count = 0;
+	for (var pk in saveObj.portal){
+		var po = saveObj.portal[pk];
+		if (!po || typeof po !== 'object' || po[cur.lockedField]) continue;
+		if (typeof po[cur.levelField] !== 'number' || po[cur.levelField] <= 0) continue;
+		if (typeof po[cur.spentField] === 'number') freed += po[cur.spentField];
+		po[cur.levelField] = 0;
+		po[cur.spentField] = 0;
+		count++;
+	}
+	if (!count) return 'No ' + curName + ' perks have levels to refund.';
+	var lo = (typeof saveObj.global[cur.leftoverKey] === 'number') ? saveObj.global[cur.leftoverKey] : 0;
+	if (!isFinite(lo + freed)) return 'Refunding would overflow ' + cur.leftoverKey + '. Not changed.';
+	saveObj.global[cur.leftoverKey] = lo + freed;
+	return 'Refunded ' + count + ' ' + curName + ' perk' + (count === 1 ? '' : 's') + ': ' + freed + ' ' + curName +
+		' moved to spendable-now. Lifetime total is unchanged, exactly like an in-game respec.';
+}
+
+// Population (trimps) is deliberately excluded: raising it naively breaks the
+// employed-workers and army-size invariants the game enforces every tick.
+var QA_RESOURCES = ['food', 'wood', 'metal', 'science', 'gems', 'fragments'];
+function applyAddResources(n){
+	if (!saveObj.resources) return 'This save has no resources section.';
+	var added = [];
+	for (var i = 0; i < QA_RESOURCES.length; i++){
+		var r = saveObj.resources[QA_RESOURCES[i]];
+		if (r && typeof r.owned === 'number' && isFinite(r.owned + n)){ r.owned += n; added.push(QA_RESOURCES[i]); }
+	}
+	if (!added.length) return 'No resource fields could take that amount.';
+	return 'Added ' + n + ' to ' + added.join(', ') + '. Amounts above your storage cap still spend fine; gathering just cannot raise them further until storage catches up.';
+}
+
+function applyAddAtPath(tokens, label, n){
+	var holder = saveObj;
+	for (var i = 0; i < tokens.length - 1 && holder; i++) holder = holder[tokens[i]];
+	var last = tokens[tokens.length - 1];
+	if (!holder || typeof holder[last] !== 'number')
+		return 'This save has no ' + tokens.join('.') + ' yet' + (tokens[0] === 'playerSpire' ? ' — open the Player Spire once in-game first.' : '.');
+	if (!isFinite(holder[last] + n)) return 'That amount would overflow ' + tokens.join('.') + '. Not changed.';
+	holder[last] += n;
+	return 'Added ' + n + ' ' + label + ' (now ' + holder[last] + ').';
+}
+
+function applySetFluffy(universe, n){
+	if (!saveObj.global) return 'This save has no global section.';
+	var isU2 = universe === 2;
+	var petName = isU2 ? 'Scruffy' : 'Fluffy';
+	var expField = isU2 ? 'fluffyExp2' : 'fluffyExp';
+	var prestigeField = isU2 ? 'fluffyPrestige2' : 'fluffyPrestige';
+	var prestige = (typeof saveObj.global[prestigeField] === 'number') ? saveObj.global[prestigeField] : 0;
+	var targetExp = fluffyExpForLevel(n, prestige);
+	if (!isFinite(targetExp)) return 'That level overflows the exp math. Not changed.';
+	var msg = [];
+	var curExp = (typeof saveObj.global[expField] === 'number') ? saveObj.global[expField] : 0;
+	if (curExp >= targetExp){
+		msg.push(petName + ' already has ' + curExp + ' exp, at or past level ' + n + '; exp was not lowered.');
+	} else {
+		saveObj.global[expField] = targetExp;
+		msg.push('Set ' + petName + ' to exactly level ' + n + (prestige ? ' at prestige ' + prestige : '') + ' (' + expField + ' = ' + targetExp + ').');
+	}
+	if (!isU2){
+		// Every Fluffy level requires a level of the Capable perk, and Fluffy is inactive at
+		// Capable 0 — raise the perk to match, with real spent/total sync like any perk edit.
+		var cap = saveObj.portal && saveObj.portal.Capable;
+		if (cap && typeof cap === 'object' && (typeof cap.level !== 'number' || cap.level < n)){
+			cap.level = n;
+			cap.locked = false;
+			cap.heliumSpent = perkSpentForLevel('Capable', n);
+			var total = syncCurrencyTotal(CURRENCIES.helium);
+			msg.push('Raised the Capable perk to ' + n + ' (Fluffy is gated by it) and recomputed its helium spending' +
+				(total !== null ? '; lifetime helium total auto-updated to ' + total : '') + '.');
+		}
+	}
+	return msg.join(' ');
+}
+
+function applyRaiseC2(n){
+	if (!saveObj.c2 || typeof saveObj.c2 !== 'object') return 'This save has no Challenge² records section.';
+	var raised = 0, total = 0;
+	for (var k in saveObj.c2){
+		if (typeof saveObj.c2[k] !== 'number') continue;
+		total++;
+		if (saveObj.c2[k] < n){ saveObj.c2[k] = n; raised++; }
+	}
+	if (!raised) return 'All ' + total + ' challenge records are already at or above zone ' + n + '.';
+	return 'Raised ' + raised + ' of ' + total + ' Challenge² and Challenge³ records to zone ' + n +
+		'. The game recomputes the bonus from these on load; records above ' + n + ' were not lowered.';
+}
+
+// Shared DOM plumbing: read a positive number (integer where the game requires one),
+// run the action, re-index, and announce.
+function qaNumber(inputId, wantInt){
+	var el = document.getElementById(inputId);
+	if (!el || el.value.trim() === '') return null;
+	var n = Number(el.value);
+	if (!isFinite(n) || n <= 0) return null;
+	if (wantInt && Math.floor(n) !== n) return null;
+	return n;
+}
+
+function runQuickAction(inputId, wantInt, what, fn){
+	if (!saveObj){ setStatus('Decode a save first.'); return; }
+	var n = null;
+	if (inputId !== null){
+		n = qaNumber(inputId, wantInt);
+		if (n === null){ setStatus('Enter a positive ' + (wantInt ? 'whole ' : '') + 'number ' + what + '. Scientific notation like 1e15 works.'); return; }
+	}
+	var msg = fn(n);
+	flatten(saveObj);
+	runSearch();
+	invalidateOutputs();
+	setStatus(msg);
+}
+
+// [inputId, integerOnly, save path tokens, label for the status message]
+var QA_ADDERS = [
+	['qaBones', true, ['global', 'b'], 'bones'],
+	['qaNullifium', false, ['global', 'nullifium'], 'nullifium'],
+	['qaEssence', false, ['global', 'essence'], 'dark essence'],
+	['qaMagmite', false, ['global', 'magmite'], 'magmite'],
+	['qaVoidMaps', true, ['global', 'totalVoidMaps'], 'void maps'],
+	['qaRunestones', false, ['playerSpire', 'main', 'runestones'], 'Player Spire runestones'],
+	['qaSpirestones', false, ['playerSpire', 'main', 'spirestones'], 'spirestones']
+];
+
+function wireQuickActions(){
+	document.getElementById('qaHeliumBtn').addEventListener('click', function(){
+		runQuickAction('qaHelium', false, 'of helium to add', function(n){ return applyAddCurrency('helium', n); });
+	});
+	document.getElementById('qaRadonBtn').addEventListener('click', function(){
+		runQuickAction('qaRadon', false, 'of radon to add', function(n){ return applyAddCurrency('radon', n); });
+	});
+	document.getElementById('qaRefundHeliumBtn').addEventListener('click', function(){
+		runQuickAction(null, false, '', function(){ return applyRefundPerks('helium'); });
+	});
+	document.getElementById('qaRefundRadonBtn').addEventListener('click', function(){
+		runQuickAction(null, false, '', function(){ return applyRefundPerks('radon'); });
+	});
+	document.getElementById('qaRespecBtn').addEventListener('click', function(){
+		runQuickAction(null, false, '', function(){
+			if (!saveObj.global) return 'This save has no global section.';
+			if (saveObj.global.canRespecPerks === true) return 'Perk respec is already available.';
+			saveObj.global.canRespecPerks = true;
+			return 'Perk respec re-enabled: the Respec button will be back at your next portal screen.';
+		});
+	});
+	document.getElementById('qaResourcesBtn').addEventListener('click', function(){
+		runQuickAction('qaResources', false, 'to add to each resource', applyAddResources);
+	});
+	QA_ADDERS.forEach(function(row){
+		document.getElementById(row[0] + 'Btn').addEventListener('click', function(){
+			runQuickAction(row[0], row[1], 'of ' + row[3] + ' to add', function(n){ return applyAddAtPath(row[2], row[3], n); });
+		});
+	});
+	document.getElementById('qaFluffyBtn').addEventListener('click', function(){
+		runQuickAction('qaFluffy', true, 'from 1 to ' + FLUFFY.maxLevelU1 + ' for Fluffy', function(n){
+			if (n > FLUFFY.maxLevelU1) return 'Fluffy caps at level ' + FLUFFY.maxLevelU1 + '. Not changed.';
+			return applySetFluffy(1, n);
+		});
+	});
+	document.getElementById('qaScruffyBtn').addEventListener('click', function(){
+		runQuickAction('qaScruffy', true, 'from 1 to ' + FLUFFY.maxLevelU2 + ' for Scruffy', function(n){
+			if (n > FLUFFY.maxLevelU2) return 'Scruffy caps at level ' + FLUFFY.maxLevelU2 + '. Not changed.';
+			return applySetFluffy(2, n);
+		});
+	});
+	document.getElementById('qaC2Btn').addEventListener('click', function(){
+		runQuickAction('qaC2', true, 'for the target zone', applyRaiseC2);
+	});
+}
+
 function setStatus(msg){ var el = document.getElementById('status'); if (el) el.textContent = msg; }
 
 function decodeSave(code){
@@ -623,9 +829,29 @@ var CATEGORIES = [
 	{ name: 'Jobs', dynamic: 'jobs' },
 	{ name: 'Buildings', dynamic: 'buildings' },
 	{ name: 'Upgrades and features', dynamic: 'upgrades' },
-	{ name: 'Fluffy', fixed: [
-		['global.fluffyExp', 'Fluffy experience'],
-		['global.fluffyPrestige', 'Fluffy prestige'] ] }
+	{ name: 'Fluffy and Scruffy', fixed: [
+		['global.fluffyExp', 'Fluffy experience (Universe 1)'],
+		['global.fluffyPrestige', 'Fluffy prestige'],
+		['global.fluffyExp2', 'Scruffy experience (Universe 2)'],
+		['global.fluffyPrestige2', 'Scruffy prestige'] ] },
+	{ name: 'Special currencies', fixed: [
+		['global.b', 'Bones'],
+		['global.nullifium', 'Nullifium (heirloom upgrades)'],
+		['global.essence', 'Dark essence (masteries)'],
+		['global.magmite', 'Magmite (Dimensional Generator)'],
+		['global.totalVoidMaps', 'Void maps held'],
+		['playerSpire.main.runestones', 'Player Spire runestones'],
+		['playerSpire.main.spirestones', 'Spirestones (Core heirlooms)'] ] },
+	{ name: 'Nature (zone 236+)', fixed: [
+		['empowerments.Poison.level', 'Poison empowerment level'],
+		['empowerments.Poison.retainLevel', 'Poison retain level'],
+		['empowerments.Poison.tokens', 'Poison tokens'],
+		['empowerments.Wind.level', 'Wind empowerment level'],
+		['empowerments.Wind.retainLevel', 'Wind retain level'],
+		['empowerments.Wind.tokens', 'Wind tokens'],
+		['empowerments.Ice.level', 'Ice empowerment level'],
+		['empowerments.Ice.retainLevel', 'Ice retain level'],
+		['empowerments.Ice.tokens', 'Ice tokens'] ] }
 ];
 
 // Turn a category into labeled descriptors for renderFields. Labels ride on shallow copies so
@@ -748,7 +974,7 @@ function onDecode(){
 	jsonStale = false;
 	applyJsonArmed = false;
 	renderFields(commonList());
-	setStatus('Save decoded. Zone ' + (obj.global.world != null ? obj.global.world : '?') + ', version ' + (obj.global.stringVersion || '?') + '. ' + leaves.length + ' editable values. Search to find any of them.');
+	setStatus('Save decoded. Zone ' + (obj.global.world != null ? obj.global.world : '?') + ', version ' + (obj.global.stringVersion || '?') + '. ' + leaves.length + ' editable values. Quick actions below cover the common edits (currencies, refunds, Fluffy, challenge records); search finds anything else.');
 	var h = document.getElementById('editHeading');
 	if (h) h.focus();
 }
@@ -804,6 +1030,7 @@ function onApplyJson(){
 window.addEventListener('DOMContentLoaded', function(){
 	document.getElementById('decodeBtn').addEventListener('click', onDecode);
 	document.getElementById('jumpZoneBtn').addEventListener('click', onZoneJump);
+	wireQuickActions();
 	document.getElementById('searchBox').addEventListener('input', onSearchInput);
 	document.getElementById('encodeBtn').addEventListener('click', onEncode);
 	document.getElementById('copyBtn').addEventListener('click', onCopy);
