@@ -6,6 +6,7 @@ services:
     volumes:
       - ./site:/usr/share/nginx/html:ro
       - ./nginx-site.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./logs:/var/log/client
     networks:
       - traefik
     healthcheck:

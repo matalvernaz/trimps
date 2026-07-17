@@ -36,6 +36,7 @@
 		If you are not using any addons that might interfere with javascript, try using the latest versions of Chrome or Firefox. 
 	</div>
 	</noscript>
+	<script src="client-log.js"></script>
 	<div id="screenReaderInfo" style="padding: 4px; border: 1px solid; margin: 4px;">
 		<h6>Screen Reader Information</h6>
 		This game uses several different ways to show additional information in tooltips.<br>
@@ -1567,6 +1568,7 @@
 		var SRC = 'https://matalvernaz.github.io/AutoTrimps/AutoTrimps2.js';
 		function optedIn(){ try { return localStorage.getItem(KEY) === '1'; } catch (e){ return false; } }
 		function inject(){
+			if (typeof clientLog === 'function') clientLog('at', 'inject start');
 			var s = document.createElement('script');
 			s.src = SRC;
 			document.head.appendChild(s);
@@ -1596,6 +1598,7 @@
 			if (atFailed || from.indexOf('AutoTrimps') === -1) return;
 			atFailed = true;
 			try { localStorage.setItem(KEY, '0'); } catch (err){}
+			if (typeof clientLog === 'function') clientLog('at', 'error auto-disable: ' + (e.message || 'unknown'));
 			if (typeof screenReaderAssert === 'function') screenReaderAssert('AutoTrimps hit an error and has been disabled. Reload the page to get back to a clean game. Error: ' + (e.message || 'unknown'));
 			refreshBtn();
 		});
@@ -1614,6 +1617,7 @@
 				if (typeof window.gameLoop === 'function' && String(window.gameLoop).length < 60 && typeof realGameLoop === 'function'){
 					window.gameLoop = realGameLoop;
 				}
+				if (typeof clientLog === 'function') clientLog('at', 'watchdog fired: not loaded within 60s, auto-disabled');
 				if (typeof screenReaderAssert === 'function') screenReaderAssert('AutoTrimps did not finish loading within a minute and has been disabled. The game has been unfrozen; reload the page for a clean start.');
 				refreshBtn();
 			}, AT_LOAD_DEADLINE_MS);
