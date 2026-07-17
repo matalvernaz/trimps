@@ -1851,10 +1851,18 @@ function tooltip(what, isItIn, event, textString, attachFunction, numCheck, rena
 	if (event != "update") positionTooltip(elem, event, renameBtn);
 }
 
+var srAssertToggle = false;
 function screenReaderAssert(text){
 	if (usingScreenReader) {
 		var elem = document.getElementById('screenReaderTooltip');
-		if (elem) elem.innerHTML = text;
+		if (elem) {
+			// A live region only re-speaks when its text actually changes, so setting the
+			// same string twice is silent. Alternate an invisible zero-width space so
+			// identical consecutive asserts (e.g. pressing Read Status twice with no state
+			// change) still announce.
+			srAssertToggle = !srAssertToggle;
+			elem.innerHTML = srAssertToggle ? text + '\u200B' : text;
+		}
 	}
 }
 
@@ -5101,6 +5109,8 @@ function message(messageString, type, lootIcon, extraClass, extraTag, htmlPrefix
 	if (usingScreenReader){
 		if (type == "Story") document.getElementById('srSumLastStory').innerHTML = "Z " + game.global.world + ": " + messageString;
 		if (type == "Combat") document.getElementById('srSumLastCombat').innerHTML = messageString;
+		if (type == "Loot") document.getElementById('srSumLastLoot').innerHTML = messageString;
+		if (type == "Unlocks") document.getElementById('srSumLastUnlock').innerHTML = messageString;
 	}
 	if (messageLock && type !== "Notices"){
 		return;
@@ -7771,6 +7781,32 @@ function screenReaderSummary(){
 		elems.srSumChallenge.innerHTML = challengeText;
 	}
 
+}
+
+// Composes a one-line spoken summary of current game state and pushes it to the
+// screen reader on demand (Read Status button). Poll-style: nothing here fires
+// automatically. Reuses screenReaderSummary() as the single source of truth for
+// the underlying numbers so the combat math isn't duplicated.
+function screenReaderStatus(){
+	if (!usingScreenReader) return;
+	screenReaderSummary();
+	var read = function(id){ var e = document.getElementById(id); return (e) ? e.textContent.trim() : ""; };
+	var parts = [];
+	parts.push("Zone " + read('srSumWorldZone') + ", cell " + read('srSumWorldCell'));
+	if (game.global.mapsActive) parts.push("Map " + read('srSumMapName') + ", cell " + read('srSumMapCell'));
+	parts.push("Trimps " + read('srSumTrimps'));
+	parts.push("Breeding " + read('srSumBreed'));
+	parts.push("Attack " + read('srSumAttackScore'));
+	parts.push("Health " + read('srSumHealthScore'));
+	parts.push((game.global.universe == 1 ? "Block " : "Prismatic Shield ") + read('srSumBlock'));
+	var resWords = ["Food", "Wood", "Metal", "Science", "Fragments", "Gems"];
+	for (var i = 0; i < resWords.length; i++){
+		var container = document.getElementById('srSum' + resWords[i] + 'Container');
+		if (container && container.style.display !== 'none') parts.push(resWords[i] + " " + read('srSum' + resWords[i]));
+	}
+	var lastCombat = read('srSumLastCombat');
+	if (lastCombat) parts.push("Last combat: " + lastCombat);
+	screenReaderAssert(parts.filter(Boolean).join(". ") + ".");
 }
 
 

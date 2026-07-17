@@ -44,6 +44,10 @@
 		You can also enable separate info buttons, which will respond to enter.<br>
 		To enable shift+/ tooltips, Turn NVDA + 8 on, and disable NVDA: Settings > browse mode: Disable "trap all command gestures from reaching the document."<br>
 		You can show/hide this information via the game setting "Show Screen Read Info."<br>
+		A "Read Status" button near the top of the page speaks your full current status (zone, army, resources, last combat). Activate it, or press Enter on it repeatedly, to poll your state at any time without navigating the summary table.<br>
+	</div>
+	<div id="srStatusBar" style="padding: 4px;">
+		<button id="srReadStatusBtn" onclick="screenReaderStatus()">Read Status</button>
 	</div>
 	<div id="offlineWrapper">
 		<div id="offlineInnerWrapper">
@@ -1422,6 +1426,16 @@
 			<tr>
 				<td>
 					Last story: <span id='srSumLastStory'></span>
+				</td>
+			</tr>
+			<tr>
+				<td>
+					Last loot: <span id='srSumLastLoot'></span>
+				</td>
+			</tr>
+			<tr>
+				<td>
+					Last unlock: <span id='srSumLastUnlock'></span>
 				</td>
 			</tr>
 			<tr>

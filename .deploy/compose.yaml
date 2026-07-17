@@ -1,0 +1,29 @@
+services:
+  trimps:
+    image: nginx:alpine
+    container_name: trimps
+    restart: unless-stopped
+    volumes:
+      - ./site:/usr/share/nginx/html:ro
+      - ./nginx-site.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - traefik
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.trimps.rule=Host(`trimps.thealvernaz.space`) || Host(`www.trimps.thealvernaz.space`)"
+      - traefik.http.routers.trimps.entrypoints=websecure
+      - traefik.http.routers.trimps.middlewares=www-to-nonwww@file
+      - traefik.http.routers.trimps.tls=true
+      - traefik.http.routers.trimps.tls.certresolver=le-dns
+      - traefik.http.routers.trimps.tls.domains[0].main=trimps.thealvernaz.space
+      - traefik.http.routers.trimps.tls.domains[0].sans=www.trimps.thealvernaz.space
+      - traefik.http.services.trimps.loadbalancer.server.port=80
+
+networks:
+  traefik:
+    external: true
