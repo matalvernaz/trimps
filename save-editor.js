@@ -86,9 +86,19 @@ function classify(path){
 	}
 	if (/^jobs\.[^.]+\.modifier$/.test(path))
 		return { kind: 'derived', hint: ' — derived from job level; edits won’t stick' };
-	if (path === 'global.world') return { kind: 'zone', hint: ' — changing zone alone leaves a stale enemy grid' };
+	if (path === 'global.world') return { kind: 'zone', hint: ' — current zone; to raise your RECORD, edit global.highestLevelCleared' };
 	if (/^jobs\.[^.]+\.owned$/.test(path)) return { kind: 'jobOwned' };
 	if (path === 'resources.trimps.owned' || path === 'resources.trimps.soldiers') return { kind: 'popCheck' };
+	if (path === 'resources.helium.owned') return { kind: 'heliumPool',
+		hint: ' — spendable at your NEXT portal; for helium to spend at View Perks right now, edit global.heliumLeftover' };
+	if (path === 'global.heliumLeftover') return { kind: 'heliumPool',
+		hint: ' — helium spendable at View Perks right now' };
+	if (path === 'global.totalHeliumEarned') return { kind: 'derived',
+		hint: ' — recomputed on load from perks + leftover + owned (when above 0); edit those instead' };
+	if (path === 'resources.radon.owned' || path === 'global.radonLeftover') return { kind: 'safe',
+		hint: ' — radon works like helium: owned pays out at next portal, leftover is spendable now' };
+	if (path === 'global.highestLevelCleared') return { kind: 'safe',
+		hint: ' — your zone record; unlocks features (masteries at 180+, formations, map modifiers). Shown in-game as this plus 1' };
 	return { kind: 'safe' };
 }
 
@@ -256,7 +266,31 @@ function onFieldChange(e){
 		return;
 	}
 	if (k === 'zone'){
-		setStatus('Set ' + d.path + ' = ' + shown + '. Warning: the saved enemy grid is for your old zone. Jumping zones this way can desync the grid; advancing in-game is safer.');
+		setStatus('Set ' + d.path + ' = ' + shown + '. Note: the current zone still uses the old saved enemy grid until you finish it; the next zone generates fresh. If this should also count as your record, edit global.highestLevelCleared.');
+		return;
+	}
+	if (k === 'heliumPool'){
+		// Mirror the engine's load-time reconciliation (main.js load): totalHeliumEarned =
+		// sum of unlocked perks' heliumSpent + heliumLeftover + helium.owned. Keeping it in
+		// sync here means stats and helium-per-hour work immediately even on saves where it
+		// was 0 (load only self-heals it when it is already above 0).
+		var spentSum = 0;
+		if (saveObj.portal) for (var pk in saveObj.portal){
+			var po = saveObj.portal[pk];
+			if (!po || typeof po !== 'object' || po.locked) continue;
+			if (typeof po.level === 'undefined' || po.level <= 0) continue;
+			if (typeof po.heliumSpent === 'number') spentSum += po.heliumSpent;
+		}
+		var leftover = (saveObj.global && typeof saveObj.global.heliumLeftover === 'number') ? saveObj.global.heliumLeftover : 0;
+		var owned = (saveObj.resources && saveObj.resources.helium && typeof saveObj.resources.helium.owned === 'number') ? saveObj.resources.helium.owned : 0;
+		var total = spentSum + leftover + owned;
+		if (saveObj.global && isFinite(total)){
+			saveObj.global.totalHeliumEarned = total;
+			refreshControl('global.totalHeliumEarned', total);
+			setStatus('Set ' + d.path + ' = ' + shown + '. Auto-updated global.totalHeliumEarned to ' + total + ' (perks spent + leftover + owned), matching how the game reconciles it on load.');
+		} else {
+			setStatus('Set ' + d.path + ' = ' + shown + '. Could not update totalHeliumEarned (missing or overflowing fields); check it manually.');
+		}
 		return;
 	}
 	if (k === 'jobOwned' || k === 'popCheck'){
@@ -326,7 +360,8 @@ function renderFields(list){
 // Empty-search view: the values people edit most, when they exist in the loaded save.
 var COMMON_PATHS = [
 	'global.world', 'global.lastClearedCell', 'global.highestLevelCleared', 'global.totalPortals',
-	'global.voidMaps', 'global.spentHelium', 'global.fluffyExp', 'global.fluffyPrestige', 'global.bones',
+	'global.heliumLeftover', 'global.totalHeliumEarned', 'global.totalVoidMaps', 'global.fluffyExp',
+	'global.fluffyPrestige',
 	'resources.food.owned', 'resources.wood.owned', 'resources.metal.owned', 'resources.science.owned',
 	'resources.gems.owned', 'resources.fragments.owned', 'resources.helium.owned', 'resources.radon.owned',
 	'resources.trimps.owned', 'resources.trimps.soldiers'
