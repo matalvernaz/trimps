@@ -1,51 +1,68 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-	<meta charset="utf-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<title>Trimps Save Editor</title>
-	<style>
-		body { font-family: sans-serif; max-width: 60em; margin: 1em auto; padding: 0 1em; line-height: 1.5; }
-		textarea { width: 100%; font-family: monospace; }
-		#importBox, #exportBox { height: 6em; }
-		#jsonBox { height: 24em; }
-		.quickField { margin: 0.4em 0; }
-		.quickField input { width: 20em; max-width: 100%; }
-		button { margin: 0.5em 0.5em 0.5em 0; padding: 0.4em 0.8em; }
-		#status { padding: 0.5em; font-weight: bold; }
-		h1, h2 { margin-top: 1em; }
-	</style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trimps Save Editor</title>
+<style>
+	body { font-family: sans-serif; max-width: 55em; margin: 1em auto; padding: 0 1em; line-height: 1.5; }
+	textarea { width: 100%; box-sizing: border-box; }
+	.field { margin: 0.4em 0; }
+	.field label { font-family: monospace; }
+	.field input[type="text"] { width: 100%; box-sizing: border-box; }
+	#status { font-weight: bold; padding: 0.5em; border: 1px solid; }
+	#sectionButtons button { margin: 0.1em; }
+	.warn { border: 2px solid; padding: 0.5em; }
+	h2 { margin-top: 1.4em; }
+</style>
 </head>
 <body>
-	<h1>Trimps Save Editor</h1>
-	<p>Edit a Trimps save entirely in your browser &mdash; nothing is uploaded. In Trimps, open Settings and press Export to copy your save code. Paste it below, edit, then paste the new code back into Settings, Import.</p>
-	<p><strong>Back up your original save code first.</strong> Editing to invalid values can make a save fail to load.</p>
+<h1>Trimps Save Editor</h1>
 
-	<div id="status" role="status" aria-live="polite">Paste a save code and press Decode Save.</div>
+<p>Edit a Trimps save entirely in your browser. Nothing is uploaded. In Trimps, go to Settings and Export to get your save code, edit it here, then paste the new code back into Import.</p>
 
-	<h2>1. Paste save</h2>
-	<label for="importBox">Trimps export code</label><br>
-	<textarea id="importBox" spellcheck="false" autocomplete="off"></textarea><br>
-	<button id="decodeBtn">Decode Save</button>
+<p class="warn"><strong>Back up first.</strong> Copy your current Export code somewhere safe before importing an edited one, so you can restore if something goes wrong.</p>
 
-	<div id="editorSections" hidden>
-		<h2 id="quickHeading" tabindex="-1">2. Quick edits</h2>
-		<p>Common numeric values detected from your save. Change any you want, then press Apply Quick Edits to write them into the save data below. Very large or non-numeric values can only be edited in the Full Save Data box.</p>
-		<div id="quickFields"></div>
-		<button id="applyBtn">Apply Quick Edits</button>
+<p id="status" role="status" aria-live="assertive">Paste a save and press Decode to begin.</p>
 
-		<h2>3. Full save data (advanced)</h2>
-		<label for="jsonBox">Editable JSON &mdash; this is exactly what gets encoded</label><br>
-		<textarea id="jsonBox" spellcheck="false" autocomplete="off"></textarea>
+<h2>1. Paste your save code</h2>
+<label for="importBox">Exported Trimps save code</label><br>
+<textarea id="importBox" rows="4" spellcheck="false" autocomplete="off"></textarea><br>
+<button id="decodeBtn" type="button">Decode</button>
 
-		<h2>4. Get new save code</h2>
-		<button id="encodeBtn">Encode Save</button><br>
-		<label for="exportBox">New save code (paste this into Trimps, Settings, Import)</label><br>
-		<textarea id="exportBox" spellcheck="false" autocomplete="off" readonly></textarea><br>
-		<button id="copyBtn">Copy to Clipboard</button>
-	</div>
+<div id="editorSections" hidden>
+	<h2 id="editHeading" tabindex="-1">2. Find and edit values</h2>
+	<p>Type part of a field name or path to find it. Some fields carry a note:</p>
+	<ul>
+		<li><strong>linked</strong>: editing a perk's level automatically recomputes its spent helium or radon, so respec stays correct.</li>
+		<li><strong>derived</strong>: the game recomputes this on load, so your edit will not stick. Edit the source field instead.</li>
+		<li><strong>warnings</strong>: changing your zone leaves a stale enemy grid, and over-filling jobs past your population is flagged when you edit.</li>
+	</ul>
 
-	<script src="lz-string.js"></script>
-	<script src="save-editor.js"></script>
+	<label for="searchBox">Filter fields by name or path</label><br>
+	<input id="searchBox" type="text" spellcheck="false" autocomplete="off"><br>
+	<p id="resultCount" role="status" aria-live="polite"></p>
+
+	<p>Or jump to a section:</p>
+	<div id="sectionButtons"></div>
+
+	<div id="fieldList"></div>
+
+	<h2>3. Advanced: edit the whole save as JSON</h2>
+	<p>For bulk or structural changes. Show the JSON, edit it, then apply it back.</p>
+	<button id="showJsonBtn" type="button">Show JSON</button>
+	<button id="applyJsonBtn" type="button">Apply JSON</button><br>
+	<label for="jsonBox">Whole-save JSON</label><br>
+	<textarea id="jsonBox" rows="12" spellcheck="false" autocomplete="off"></textarea>
+
+	<h2>4. Get your new save code</h2>
+	<button id="encodeBtn" type="button">Encode</button>
+	<button id="copyBtn" type="button">Copy to clipboard</button><br>
+	<label for="exportBox">New save code (paste this into Trimps Import)</label><br>
+	<textarea id="exportBox" rows="4" spellcheck="false" autocomplete="off" readonly></textarea>
+</div>
+
+<script src="lz-string.js"></script>
+<script src="save-editor.js"></script>
 </body>
 </html>
