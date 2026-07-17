@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<title>Trimps Save Editor</title>
+	<style>
+		body { font-family: sans-serif; max-width: 60em; margin: 1em auto; padding: 0 1em; line-height: 1.5; }
+		textarea { width: 100%; font-family: monospace; }
+		#importBox, #exportBox { height: 6em; }
+		#jsonBox { height: 24em; }
+		.quickField { margin: 0.4em 0; }
+		.quickField input { width: 20em; max-width: 100%; }
+		button { margin: 0.5em 0.5em 0.5em 0; padding: 0.4em 0.8em; }
+		#status { padding: 0.5em; font-weight: bold; }
+		h1, h2 { margin-top: 1em; }
+	</style>
+</head>
+<body>
+	<h1>Trimps Save Editor</h1>
+	<p>Edit a Trimps save entirely in your browser &mdash; nothing is uploaded. In Trimps, open Settings and press Export to copy your save code. Paste it below, edit, then paste the new code back into Settings, Import.</p>
+	<p><strong>Back up your original save code first.</strong> Editing to invalid values can make a save fail to load.</p>
+
+	<div id="status" role="status" aria-live="polite">Paste a save code and press Decode Save.</div>
+
+	<h2>1. Paste save</h2>
+	<label for="importBox">Trimps export code</label><br>
+	<textarea id="importBox" spellcheck="false" autocomplete="off"></textarea><br>
+	<button id="decodeBtn">Decode Save</button>
+
+	<div id="editorSections" hidden>
+		<h2 id="quickHeading" tabindex="-1">2. Quick edits</h2>
+		<p>Common numeric values detected from your save. Change any you want, then press Apply Quick Edits to write them into the save data below. Very large or non-numeric values can only be edited in the Full Save Data box.</p>
+		<div id="quickFields"></div>
+		<button id="applyBtn">Apply Quick Edits</button>
+
+		<h2>3. Full save data (advanced)</h2>
+		<label for="jsonBox">Editable JSON &mdash; this is exactly what gets encoded</label><br>
+		<textarea id="jsonBox" spellcheck="false" autocomplete="off"></textarea>
+
+		<h2>4. Get new save code</h2>
+		<button id="encodeBtn">Encode Save</button><br>
+		<label for="exportBox">New save code (paste this into Trimps, Settings, Import)</label><br>
+		<textarea id="exportBox" spellcheck="false" autocomplete="off" readonly></textarea><br>
+		<button id="copyBtn">Copy to Clipboard</button>
+	</div>
+
+	<script src="lz-string.js"></script>
+	<script src="save-editor.js"></script>
+</body>
+</html>
