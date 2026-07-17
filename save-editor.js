@@ -162,14 +162,18 @@ function classify(path){
 	if (path === 'global.world') return { kind: 'zone', hint: ' — current zone; to raise your RECORD, edit global.highestLevelCleared' };
 	if (/^jobs\.[^.]+\.owned$/.test(path)) return { kind: 'jobOwned' };
 	if (path === 'resources.trimps.owned' || path === 'resources.trimps.soldiers') return { kind: 'popCheck' };
-	if (path === 'resources.helium.owned') return { kind: 'heliumPool',
-		hint: ' — spendable at your NEXT portal; for helium to spend at View Perks right now, edit global.heliumLeftover' };
-	if (path === 'global.heliumLeftover') return { kind: 'heliumPool',
-		hint: ' — helium spendable at View Perks right now' };
-	if (path === 'global.totalHeliumEarned') return { kind: 'derived',
-		hint: ' — recomputed on load from perks + leftover + owned (when above 0); edit those instead' };
-	if (path === 'resources.radon.owned' || path === 'global.radonLeftover') return { kind: 'safe',
-		hint: ' — radon works like helium: owned pays out at next portal, leftover is spendable now' };
+	if (path === 'resources.helium.owned') return { kind: 'curPool', cur: 'helium',
+		hint: ' — spendable at your NEXT portal; for helium to spend at View Perks right now, edit global.heliumLeftover. Lifetime total auto-syncs' };
+	if (path === 'global.heliumLeftover') return { kind: 'curPool', cur: 'helium',
+		hint: ' — helium spendable at View Perks right now. Lifetime total auto-syncs' };
+	if (path === 'global.totalHeliumEarned') return { kind: 'curTotal', cur: 'helium',
+		hint: ' — lifetime total; editing it moves the difference into your spendable helium' };
+	if (path === 'resources.radon.owned') return { kind: 'curPool', cur: 'radon',
+		hint: ' — spendable at your NEXT portal; for radon to spend right now, edit global.radonLeftover. Lifetime total auto-syncs' };
+	if (path === 'global.radonLeftover') return { kind: 'curPool', cur: 'radon',
+		hint: ' — radon spendable at View Perks right now. Lifetime total auto-syncs' };
+	if (path === 'global.totalRadonEarned') return { kind: 'curTotal', cur: 'radon',
+		hint: ' — lifetime total; editing it moves the difference into your spendable radon' };
 	if (path === 'global.highestLevelCleared') return { kind: 'safe',
 		hint: ' — your zone record; unlocks features (masteries at 180+, formations, map modifiers). Shown in-game as this plus 1' };
 	return { kind: 'safe' };
@@ -237,6 +241,38 @@ function refreshControl(path, value){
 	if (ctrl) ctrl.value = String(value);
 }
 
+// Helium and radon each form a trio bound by one identity: totalEarned = perk spending +
+// leftover + owned. Load reconciles helium this way (main.js load, when the total is above 0);
+// radon accumulates the same identity during play. Editing any member re-syncs the others.
+var CURRENCIES = {
+	helium: { name: 'helium', ownedTokens: ['resources', 'helium', 'owned'], leftoverKey: 'heliumLeftover', totalKey: 'totalHeliumEarned', spentField: 'heliumSpent', levelField: 'level', lockedField: 'locked' },
+	radon:  { name: 'radon',  ownedTokens: ['resources', 'radon', 'owned'],  leftoverKey: 'radonLeftover',  totalKey: 'totalRadonEarned',  spentField: 'radSpent',   levelField: 'radLevel', lockedField: 'radLocked' }
+};
+
+function currencyParts(cur){
+	// Perk-spend loop mirrors the engine's load reconciliation: skip locked, skip level <= 0.
+	var spent = 0;
+	if (saveObj.portal) for (var pk in saveObj.portal){
+		var po = saveObj.portal[pk];
+		if (!po || typeof po !== 'object' || po[cur.lockedField]) continue;
+		if (typeof po[cur.levelField] === 'undefined' || po[cur.levelField] <= 0) continue;
+		if (typeof po[cur.spentField] === 'number') spent += po[cur.spentField];
+	}
+	var leftover = (saveObj.global && typeof saveObj.global[cur.leftoverKey] === 'number') ? saveObj.global[cur.leftoverKey] : 0;
+	var owned = readByTokens(cur.ownedTokens);
+	if (typeof owned !== 'number') owned = 0;
+	return { spent: spent, leftover: leftover, owned: owned };
+}
+
+function syncCurrencyTotal(cur){
+	var p = currencyParts(cur);
+	var total = p.spent + p.leftover + p.owned;
+	if (!saveObj.global || !isFinite(total)) return null;
+	saveObj.global[cur.totalKey] = total;
+	refreshControl('global.' + cur.totalKey, total);
+	return total;
+}
+
 // Sum of employed Trimps across jobs, for the population sanity check.
 function jobsPlusSoldiers(){
 	var sum = 0;
@@ -281,8 +317,40 @@ function onFieldChange(e){
 		perkObj[d.smart.spentField] = spent;
 		if (!hadKey) flatten(saveObj); // brand-new leaf: re-index so it is searchable
 		refreshControl(d.smart.spentPath, spent);
+		var perkCur = CURRENCIES[(d.smart.spentField === 'radSpent') ? 'radon' : 'helium'];
+		var newTotal = syncCurrencyTotal(perkCur);
 		invalidateOutputs();
-		setStatus('Set ' + d.path + ' = ' + shown + '. Auto-updated ' + d.smart.spentField + ' to ' + spent + ' so respec and helium totals stay correct.');
+		setStatus('Set ' + d.path + ' = ' + shown + '. Auto-updated ' + d.smart.spentField + ' to ' + spent +
+			(newTotal !== null ? ' and ' + perkCur.totalKey + ' to ' + newTotal : '') + ' so respec and lifetime totals stay correct.');
+		return;
+	}
+
+	if (k === 'curTotal'){
+		// totalEarned = perks spent + leftover + owned. Setting the total re-distributes the
+		// difference into the spendable pools: raises go to leftover (usable right now);
+		// reductions drain leftover first, then owned. It can never go below perk spending.
+		var curT = CURRENCIES[d.smart.cur];
+		var target = Number(val);
+		var partsT = currencyParts(curT);
+		if (target < partsT.spent){
+			el.value = String(oldVal);
+			setStatus(d.path + ' cannot go below the ' + partsT.spent + ' ' + curT.name + ' already spent on perks. Lower perk levels first, or use at least ' + partsT.spent + '. Not changed.');
+			return;
+		}
+		var newOwned = partsT.owned;
+		var newLeftover = target - partsT.spent - partsT.owned;
+		if (newLeftover < 0){ newOwned += newLeftover; newLeftover = 0; }
+		setByTokens(d.tokens, target);
+		if (saveObj.global){
+			saveObj.global[curT.leftoverKey] = newLeftover;
+			refreshControl('global.' + curT.leftoverKey, newLeftover);
+		}
+		if (saveObj.resources && saveObj.resources[curT.name]){
+			setByTokens(curT.ownedTokens, newOwned);
+			refreshControl(curT.ownedTokens.join('.'), newOwned);
+		}
+		invalidateOutputs();
+		setStatus('Set ' + d.path + ' = ' + shown + '. Rebalanced to match: ' + curT.leftoverKey + ' is now ' + newLeftover + ' and owned is ' + newOwned + ', so spendable ' + curT.name + ' equals the new total minus perk spending.');
 		return;
 	}
 
@@ -342,28 +410,11 @@ function onFieldChange(e){
 		setStatus('Set ' + d.path + ' = ' + shown + '. Note: the current zone still uses the old saved enemy grid until you finish it; the next zone generates fresh. If this should also count as your record, edit global.highestLevelCleared.');
 		return;
 	}
-	if (k === 'heliumPool'){
-		// Mirror the engine's load-time reconciliation (main.js load): totalHeliumEarned =
-		// sum of unlocked perks' heliumSpent + heliumLeftover + helium.owned. Keeping it in
-		// sync here means stats and helium-per-hour work immediately even on saves where it
-		// was 0 (load only self-heals it when it is already above 0).
-		var spentSum = 0;
-		if (saveObj.portal) for (var pk in saveObj.portal){
-			var po = saveObj.portal[pk];
-			if (!po || typeof po !== 'object' || po.locked) continue;
-			if (typeof po.level === 'undefined' || po.level <= 0) continue;
-			if (typeof po.heliumSpent === 'number') spentSum += po.heliumSpent;
-		}
-		var leftover = (saveObj.global && typeof saveObj.global.heliumLeftover === 'number') ? saveObj.global.heliumLeftover : 0;
-		var owned = (saveObj.resources && saveObj.resources.helium && typeof saveObj.resources.helium.owned === 'number') ? saveObj.resources.helium.owned : 0;
-		var total = spentSum + leftover + owned;
-		if (saveObj.global && isFinite(total)){
-			saveObj.global.totalHeliumEarned = total;
-			refreshControl('global.totalHeliumEarned', total);
-			setStatus('Set ' + d.path + ' = ' + shown + '. Auto-updated global.totalHeliumEarned to ' + total + ' (perks spent + leftover + owned), matching how the game reconciles it on load.');
-		} else {
-			setStatus('Set ' + d.path + ' = ' + shown + '. Could not update totalHeliumEarned (missing or overflowing fields); check it manually.');
-		}
+	if (k === 'curPool'){
+		var curP = CURRENCIES[d.smart.cur];
+		var totalP = syncCurrencyTotal(curP);
+		if (totalP !== null) setStatus('Set ' + d.path + ' = ' + shown + '. Auto-updated global.' + curP.totalKey + ' to ' + totalP + ' (perks spent + leftover + owned), keeping all ' + curP.name + ' values consistent.');
+		else setStatus('Set ' + d.path + ' = ' + shown + '. Could not update ' + curP.totalKey + ' (missing or overflowing fields); check it manually.');
 		return;
 	}
 	if (k === 'jobOwned' || k === 'popCheck'){
