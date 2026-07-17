@@ -40,6 +40,13 @@
 		<li><strong>warnings</strong>: changing your zone leaves a stale enemy grid, and over-filling jobs past your population is flagged when you edit.</li>
 	</ul>
 
+	<h3>Jump to zone</h3>
+	<p>Sets your current zone and zone record, and unlocks what a natural run would have by then: the portal, broken planet, formations, automation, all standard jobs, buildings, and equipment (Magmamancers and Uber housing from zone 230). It never removes anything, so jumping low is harmless. Repeatable upgrades like Coordination are not granted — buy them in-game after editing resources.</p>
+	<label for="jumpZoneInput">Target zone</label>
+	<input id="jumpZoneInput" type="text" inputmode="numeric" autocomplete="off">
+	<button id="jumpZoneBtn" type="button">Jump</button>
+
+	<h3>Find individual values</h3>
 	<label for="searchBox">Filter fields by name or path</label><br>
 	<input id="searchBox" type="text" spellcheck="false" autocomplete="off"><br>
 	<p id="resultCount" role="status" aria-live="polite"></p>

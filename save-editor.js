@@ -42,6 +42,79 @@ var saveObj = null;      // canonical decoded save; controls read from and write
 var leaves = [];         // [{path, tokens, type, smart}] one per editable scalar/null value
 var leafByPath = {};     // path -> descriptor
 
+// Zone-jump unlock template, derived by diffing a real zone-444 save against a fresh game.
+// Each entry lists what a natural playthrough has by the given zone. Only one-shot feature
+// unlocks are included: repeatable upgrades (Coordination, prestiges) would warp balance if
+// copied, challenge-completion flags are earned bonuses, and per-run state doesn't belong.
+// Thresholds are exact where the engine gates them (Formations 60, Dominance 70, Barrier 80)
+// and approximate for the late tier (230); a jump to a high zone gets everything either way.
+var ZONE_UNLOCKS = [
+	{ zone: 20, globals: ['portalActive'] },
+	{ zone: 60,
+		upgrades: ['Battle', 'Bloodlust', 'Blockmaster', 'Trapstorm', 'Bounty', 'Anger', 'Formations', 'Miners', 'Scientists', 'Trainers', 'Explorers'],
+		jobs: ['Farmer', 'Lumberjack', 'Miner', 'Scientist', 'Trainer', 'Explorer', 'Geneticist'],
+		buildings: ['Trap', 'Barn', 'Shed', 'Forge', 'Hut', 'House', 'Mansion', 'Hotel', 'Resort', 'Gateway', 'Wormhole', 'Collector', 'Warpstation', 'Gym', 'Tribute', 'Nursery'],
+		equipment: ['Shield', 'Dagger', 'Boots', 'Mace', 'Helmet', 'Polearm', 'Pants', 'Battleaxe', 'Shoulderguards', 'Greatsword', 'Breastplate', 'Arbalest', 'Gambeson'],
+		globals: ['brokenPlanet', 'mapsUnlocked', 'trapBuildAllowed', 'autoUpgradesAvailable', 'autoUpgrades', 'autoStorageAvailable', 'autoStorage', 'Geneticistassist'] },
+	{ zone: 70, upgrades: ['Dominance'] },
+	{ zone: 80, upgrades: ['Barrier'] },
+	{ zone: 230,
+		upgrades: ['Magmamancers', 'UberHut', 'UberHouse', 'UberMansion', 'UberHotel', 'UberResort'],
+		jobs: ['Magmamancer'] }
+];
+
+// Apply everything a natural run would have by targetZone. Only ever unlocks — never locks,
+// never lowers done counts — so jumping below your progress is a no-op for flags.
+function applyZoneJump(targetZone){
+	var changed = [];
+	function unlockIn(section, names){
+		if (!saveObj[section]) return;
+		for (var i = 0; i < names.length; i++){
+			var o = saveObj[section][names[i]];
+			if (o && typeof o === 'object' && o.locked){ o.locked = 0; changed.push(section + '.' + names[i]); }
+		}
+	}
+	for (var t = 0; t < ZONE_UNLOCKS.length; t++){
+		var tier = ZONE_UNLOCKS[t];
+		if (targetZone < tier.zone) continue;
+		if (tier.upgrades && saveObj.upgrades){
+			for (var u = 0; u < tier.upgrades.length; u++){
+				var up = saveObj.upgrades[tier.upgrades[u]];
+				if (!up || typeof up !== 'object') continue;
+				if (up.locked){ up.locked = 0; changed.push('upgrades.' + tier.upgrades[u]); }
+				if (!up.done){ up.done = 1; if (changed.indexOf('upgrades.' + tier.upgrades[u]) === -1) changed.push('upgrades.' + tier.upgrades[u]); }
+			}
+		}
+		if (tier.jobs) unlockIn('jobs', tier.jobs);
+		if (tier.buildings) unlockIn('buildings', tier.buildings);
+		if (tier.equipment) unlockIn('equipment', tier.equipment);
+		if (tier.globals && saveObj.global){
+			for (var g = 0; g < tier.globals.length; g++){
+				if (saveObj.global[tier.globals[g]] !== true){ saveObj.global[tier.globals[g]] = true; changed.push('global.' + tier.globals[g]); }
+			}
+		}
+	}
+	saveObj.global.world = targetZone;
+	saveObj.global.lastClearedCell = -1; // zone start, matching the engine's nextWorld reset
+	if (typeof saveObj.global.highestLevelCleared === 'number' && saveObj.global.highestLevelCleared < targetZone - 1)
+		saveObj.global.highestLevelCleared = targetZone - 1;
+	return changed;
+}
+
+function onZoneJump(){
+	if (!saveObj){ setStatus('Decode a save first.'); return; }
+	var z = Number(document.getElementById('jumpZoneInput').value);
+	if (!isNonNegInt(z) || z < 1){ setStatus('Jump zone must be a whole number of 1 or more.'); return; }
+	var changed = applyZoneJump(z);
+	flatten(saveObj);
+	runSearch();
+	invalidateOutputs();
+	setStatus('Jumped to zone ' + z + '. Set world, cell, and zone record, and applied ' + changed.length +
+		' unlock' + (changed.length === 1 ? '' : 's') + ' a natural run would have by now' +
+		(changed.length ? ' (portal, features, jobs, buildings, equipment as applicable)' : '') +
+		'. The current zone still uses the old enemy grid until you finish it. Repeatable upgrades like Coordination are not granted; buy them in-game with edited resources.');
+}
+
 function setStatus(msg){ var el = document.getElementById('status'); if (el) el.textContent = msg; }
 
 function decodeSave(code){
@@ -459,6 +532,7 @@ function onApplyJson(){
 
 window.addEventListener('DOMContentLoaded', function(){
 	document.getElementById('decodeBtn').addEventListener('click', onDecode);
+	document.getElementById('jumpZoneBtn').addEventListener('click', onZoneJump);
 	document.getElementById('searchBox').addEventListener('input', onSearchInput);
 	document.getElementById('encodeBtn').addEventListener('click', onEncode);
 	document.getElementById('copyBtn').addEventListener('click', onCopy);
