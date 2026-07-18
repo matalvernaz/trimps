@@ -1826,11 +1826,16 @@ function tooltip(what, isItIn, event, textString, attachFunction, numCheck, rena
 		else{
 			if (game.global.lockTooltip){
 				screenReaderAssert("Confirmation Popup is active. Press S to view the popup.")
+				// Leave the lock set while the modal is on screen; it clears when the user
+				// confirms/cancels (cancelTooltip) or presses S to read it. Resetting it here
+				// let loop-driven callers (AutoTrimps' remakeTooltip) re-fire tooltip() every
+				// frame, spamming the assertive live region and rebuilding the Confirm/Cancel
+				// buttons out from under keyboard focus.
 			}
 			else{
 				screenReaderAssert("");
+				game.global.lockTooltip = false;
 			}
-			game.global.lockTooltip = false;
 		}
 	}
 	document.getElementById("tipTitle" + tipNum).innerHTML = titleText;
