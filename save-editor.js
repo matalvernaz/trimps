@@ -348,7 +348,7 @@ function onZoneJump(){
 // (4^L - 1) / 3). U1 Fluffy caps at the 10-entry reward list and every level requires a
 // matching level of the Capable perk; U2 Scruffy caps at the 31-entry rewardsU2 list with
 // no Capable gate (Fluffy.getCapableLevel returns the list length in U2).
-var FLUFFY = { firstLevel: 1000, growth: 4, prestigeExpModifier: 5, maxLevelU1: 10, maxLevelU2: 31 };
+var FLUFFY = { firstLevel: 1000, growth: 4, prestigeExpModifier: 5, maxLevelU1: 10, maxLevelU2: 31, maxPrestigeU1: 8 };
 
 function fluffyExpForLevel(level, prestige){
 	var first = FLUFFY.firstLevel * Math.pow(FLUFFY.prestigeExpModifier, prestige || 0);
@@ -414,22 +414,34 @@ function applyAddAtPath(tokens, label, n){
 	return 'Added ' + n + ' ' + label + ' (now ' + holder[last] + ').';
 }
 
-function applySetFluffy(universe, n){
+function applySetFluffy(universe, n, evolution){
 	if (!saveObj.global) return 'This save has no global section.';
 	var isU2 = universe === 2;
 	var petName = isU2 ? 'Scruffy' : 'Fluffy';
 	var expField = isU2 ? 'fluffyExp2' : 'fluffyExp';
 	var prestigeField = isU2 ? 'fluffyPrestige2' : 'fluffyPrestige';
-	var prestige = (typeof saveObj.global[prestigeField] === 'number') ? saveObj.global[prestigeField] : 0;
+	// Evolution (prestige) is a Universe 1 Fluffy mechanic; Scruffy has none, so ignore it there.
+	var setEvo = !isU2 && typeof evolution === 'number';
+	var prestige = setEvo ? evolution
+		: ((typeof saveObj.global[prestigeField] === 'number') ? saveObj.global[prestigeField] : 0);
 	var targetExp = fluffyExpForLevel(n, prestige);
 	if (!isFinite(targetExp)) return 'That level overflows the exp math. Not changed.';
 	var msg = [];
-	var curExp = (typeof saveObj.global[expField] === 'number') ? saveObj.global[expField] : 0;
-	if (curExp >= targetExp){
-		msg.push(petName + ' already has ' + curExp + ' exp, at or past level ' + n + '; exp was not lowered.');
-	} else {
+	if (setEvo){
+		// A deliberate set of both evolution and level: write the prestige and its matching exp
+		// exactly. This can lower exp, which is what you want when dropping to a lower evolution.
+		saveObj.global[prestigeField] = prestige;
 		saveObj.global[expField] = targetExp;
-		msg.push('Set ' + petName + ' to exactly level ' + n + (prestige ? ' at prestige ' + prestige : '') + ' (' + expField + ' = ' + targetExp + ').');
+		msg.push('Set ' + petName + ' to evolution ' + prestige + ', level ' + n +
+			' (' + prestigeField + ' = ' + prestige + ', ' + expField + ' = ' + targetExp + ').');
+	} else {
+		var curExp = (typeof saveObj.global[expField] === 'number') ? saveObj.global[expField] : 0;
+		if (curExp >= targetExp){
+			msg.push(petName + ' already has ' + curExp + ' exp, at or past level ' + n + '; exp was not lowered.');
+		} else {
+			saveObj.global[expField] = targetExp;
+			msg.push('Set ' + petName + ' to exactly level ' + n + (prestige ? ' at evolution ' + prestige : '') + ' (' + expField + ' = ' + targetExp + ').');
+		}
 	}
 	if (!isU2){
 		// Every Fluffy level requires a level of the Capable perk, and Fluffy is inactive at
@@ -528,7 +540,14 @@ function wireQuickActions(){
 	document.getElementById('qaFluffyBtn').addEventListener('click', function(){
 		runQuickAction('qaFluffy', true, 'from 1 to ' + FLUFFY.maxLevelU1 + ' for Fluffy', function(n){
 			if (n > FLUFFY.maxLevelU1) return 'Fluffy caps at level ' + FLUFFY.maxLevelU1 + '. Not changed.';
-			return applySetFluffy(1, n);
+			var evoRaw = (document.getElementById('qaFluffyEvo').value || '').trim();
+			var evo;
+			if (evoRaw !== ''){
+				evo = Number(evoRaw);
+				if (!isNonNegInt(evo) || evo > FLUFFY.maxPrestigeU1)
+					return 'Fluffy evolution must be a whole number from 0 to ' + FLUFFY.maxPrestigeU1 + '. Not changed.';
+			}
+			return applySetFluffy(1, n, evo);
 		});
 	});
 	document.getElementById('qaScruffyBtn').addEventListener('click', function(){
