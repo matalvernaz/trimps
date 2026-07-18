@@ -286,6 +286,7 @@ function applyZoneJump(targetZone){
 		if (tier.equipment) unlockIn('equipment', tier.equipment);
 		if (tier.globals && saveObj.global){
 			for (var g = 0; g < tier.globals.length; g++){
+				if (tier.globals[g] === 'brokenPlanet' && saveObj.global.universe === 2) continue; // U2's planet never breaks
 				if (saveObj.global[tier.globals[g]] !== true){ saveObj.global[tier.globals[g]] = true; changed.push('global.' + tier.globals[g]); }
 			}
 		}
