@@ -1628,9 +1628,12 @@
 		});
 	})();
 
-	// Keyboard access for the click-only chrome: the top settings bar (td onclick) and the
-	// settings-category tabs (li onclick with href-less anchors) get focus, a button role,
-	// and Enter/Space activation. Everything inside the menus is already real buttons.
+	// Keyboard access for the click-only chrome: the top settings bar (td onclick), the
+	// settings-category tabs (li onclick with href-less anchors), and the Bone Trader panel
+	// (div.boneBtn purchase buttons, tr onclick imp-selection rows) get focus, a button role,
+	// and Enter/Space activation. The bone panel rebuilds its buttons on every purchase and
+	// import refresh, so a MutationObserver re-applies the pass; buttonize is guarded with a
+	// data flag so re-runs never stack duplicate listeners.
 	(function(){
 		function keyClick(e){
 			if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
@@ -1638,17 +1641,37 @@
 			e.currentTarget.click();
 		}
 		function buttonize(el, label){
-			if (!el) return;
+			if (!el || el.dataset.srBtn) return;
+			el.dataset.srBtn = '1';
 			if (!el.getAttribute('role')) el.setAttribute('role', 'button');
 			if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
 			el.addEventListener('keydown', keyClick);
 			if (label) el.setAttribute('aria-label', label);
+		}
+		function passBoneTrader(){
+			var root = document.getElementById('boneWrapper');
+			if (!root) return;
+			root.querySelectorAll('div.boneBtn[onclick]').forEach(function(el){ buttonize(el); });
+			root.querySelectorAll('tr[onclick]').forEach(function(el){ buttonize(el); });
 		}
 		window.addEventListener('DOMContentLoaded', function(){
 			document.querySelectorAll('#settingsTable td.btn').forEach(function(td){ buttonize(td); });
 			buttonize(document.getElementById('pastUpgradesBtn'), 'View portal upgrades');
 			buttonize(document.getElementById('portalTimer'), 'Pause or resume the game');
 			document.querySelectorAll('#settingsTabs li.settingTab').forEach(function(li){ buttonize(li); });
+			passBoneTrader();
+			var boneRoot = document.getElementById('boneWrapper');
+			if (boneRoot && typeof MutationObserver === 'function'){
+				new MutationObserver(passBoneTrader).observe(boneRoot, { childList: true, subtree: true });
+			}
+			// Selecting an imp only recolours its row; say what happened and what it costs.
+			if (typeof window.selectImp === 'function'){
+				var realSelectImp = window.selectImp;
+				window.selectImp = function(name){
+					realSelectImp(name);
+					if (typeof screenReaderAssert === 'function') screenReaderAssert('Selected ' + name + '. The buy button now purchases ' + name + ' for 50 bones.');
+				};
+			}
 		});
 	})();
 	</script>
