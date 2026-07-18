@@ -1496,7 +1496,7 @@
 			<div id='searchSettingsWindow'>
 				<div id='settingTitleBar'>
 					<button class='noselect optionContainer settingsBtn tealColor settingTypeBtn' onclick='toggleSettingSection(false)'>Browse All</button>
-					<span id='searchSettingsTitle'>Choose a Category Below, or Search for a Setting/Keyword:</span>&nbsp;
+					<label id='searchSettingsTitle' for='searchSettings'>Choose a Category Below, or Search for a Setting/Keyword:</label>&nbsp;
 					<input id='searchSettings' onkeyup='searchSettings(this)' /><br/>
 					<div id='settingsTabs'>
 						<ul class="nav nav-tabs nav-justified" aria-label="Settings Tabs">
@@ -1514,7 +1514,7 @@
 				<div id='settingSearchResults'></div>
 			</div>
 			<div id="allSettings" style="display: none">
-				<div class='noselect optionContainer settingsBtn tealColor' onclick='toggleSettingSection(true)'>Back to Search</div>
+				<button class='noselect optionContainer settingsBtn tealColor' onclick='toggleSettingSection(true)'>Back to Search</button>
 				<div id="allSettingsHere"></div>
 			</div>
 		</div>
@@ -1625,6 +1625,30 @@
 		window.addEventListener('DOMContentLoaded', function(){
 			refreshBtn();
 			if (optedIn()){ inject(); armWatchdog(); }
+		});
+	})();
+
+	// Keyboard access for the click-only chrome: the top settings bar (td onclick) and the
+	// settings-category tabs (li onclick with href-less anchors) get focus, a button role,
+	// and Enter/Space activation. Everything inside the menus is already real buttons.
+	(function(){
+		function keyClick(e){
+			if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+			e.preventDefault();
+			e.currentTarget.click();
+		}
+		function buttonize(el, label){
+			if (!el) return;
+			if (!el.getAttribute('role')) el.setAttribute('role', 'button');
+			if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '0');
+			el.addEventListener('keydown', keyClick);
+			if (label) el.setAttribute('aria-label', label);
+		}
+		window.addEventListener('DOMContentLoaded', function(){
+			document.querySelectorAll('#settingsTable td.btn').forEach(function(td){ buttonize(td); });
+			buttonize(document.getElementById('pastUpgradesBtn'), 'View portal upgrades');
+			buttonize(document.getElementById('portalTimer'), 'Pause or resume the game');
+			document.querySelectorAll('#settingsTabs li.settingTab').forEach(function(li){ buttonize(li); });
 		});
 	})();
 	</script>

@@ -6379,7 +6379,10 @@ function settingTab(what){
 	searchSettings(elem);
 	clearSettingTabs();
 	var tabElem = document.getElementById(what + "Tab");
-	if (tabElem) swapClass('tab', 'tabSelected', tabElem);
+	if (tabElem){
+		swapClass('tab', 'tabSelected', tabElem);
+		tabElem.setAttribute('aria-current', 'true');
+	}
 	if (what == "New") document.getElementById('NewTab').style.display = "table-cell";
 }
 
@@ -6387,6 +6390,7 @@ function clearSettingTabs(){
 	var elems = document.getElementsByClassName('settingTab');
 	for (var x = 0; x < elems.length; x++){
 		swapClass('tab', 'tabNotSelected', elems[x])
+		elems[x].removeAttribute('aria-current');
 	}
 }
 
