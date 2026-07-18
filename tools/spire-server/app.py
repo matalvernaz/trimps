@@ -29,8 +29,10 @@ RUNTIMES = (10, 30, 60, 120)
 MAX_FLOORS = 30
 # Core descriptions the optimizer rejects are caught before the real run; these are the
 # substrings its parser prints on a bad -c string.
-CORE_ERR_MARKERS = ('invalid core tier', 'too few mods', 'too many mods', 'below base value',
-                    'above', 'invalid ')
+CORE_ERR_MARKERS = ('invalid core tier', 'too few mods', 'too many mods', 'below base value')
+# Low to high. DataBeaver caps mods per tier (common 1, rare/epic/legendary up to 3,
+# magnificent/ethereal up to 4) and enforces a per-tier value floor; repair_core walks these.
+CORE_TIERS = ('common', 'rare', 'epic', 'legendary', 'magnificent', 'ethereal')
 
 PAGE_TOP = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -103,15 +105,22 @@ SCRIPT = r"""<script src="/lz-string.js"></script>
     if(rarity >= 1 && rarity <= 6){ tier = TIER[rarity]; }
     else if(rarity >= 7){ tier = "ethereal"; note = "core rarity is above the optimizer's top tier, approximated as ethereal"; }
     else { tier = "common"; }
-    var parts = [];
+    // Emit in a fixed priority so that if the server has to drop mods to fit a tier's cap
+    // (DataBeaver allows at most 4, modern cores carry more), the trap-damage mods survive
+    // and income/synergy mods are shed first.
+    var order = ["fireTrap", "poisonTrap", "lightningTrap", "strengthEffect", "condenserEffect", "runestones"];
+    var val = {};
     for(var i=0; i<core.mods.length; i++){
       var m = core.mods[i];
-      if(!m) continue;
-      var tok = MODTOK[m[0]];
-      if(!tok || m[0] === "empty") continue;
-      var v = Math.round(m[1]);
+      if(m && m[0] && m[0] !== "empty") val[m[0]] = m[1];
+    }
+    var parts = [];
+    for(var j=0; j<order.length; j++){
+      var key = order[j];
+      if(!(key in val) || !MODTOK[key]) continue;
+      var v = Math.round(val[key]);
       if(v <= 0) continue;
-      parts.push(tok + ":" + v);
+      parts.push(MODTOK[key] + ":" + v);
     }
     if(!parts.length) return {str:"", note:""};
     return {str: tier + "/" + parts.join("/"), note: note};
@@ -218,6 +227,31 @@ def core_error(core):
     return None
 
 
+def repair_core(core):
+    """Coerce a core string into one the optimizer accepts.
+
+    Modern Trimps cores carry more mods (and higher rarities) than DataBeaver's optimizer
+    models, so a faithful string can be rejected for too many mods, a missing tier, or a value
+    floor. The binary is the only authority on those rules, so use it as an oracle: keep as many
+    of the (priority-ordered) mods as fit, at whatever tier validates. Returns (core, note) where
+    core is '' if nothing worked. Tier choice doesn't change the result because -k pins the given
+    mod values; it only has to parse.
+    """
+    if not core:
+        return '', ''
+    if core_error(core) is None:
+        return core, ''
+    mods = [p for p in core.split('/')[1:] if p]
+    for keep in range(min(len(mods), 4), 0, -1):
+        for tier in CORE_TIERS:
+            cand = tier + '/' + '/'.join(mods[:keep])
+            if core_error(cand) is None:
+                if keep < len(mods):
+                    return cand, ('Your core has %d mods; the optimizer accepts at most 4, so the layout used the top %d: %s.' % (len(mods), keep, cand))
+                return cand, ('Your core was adjusted to %s so the optimizer would accept it; the mod values are unchanged.' % cand)
+    return '', 'Your core could not be expressed for the optimizer, so the layout was found without it.'
+
+
 def layout_commands(flat):
     """Turn the flat trap string into in-game accessible-Spire commands.
 
@@ -316,10 +350,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         note = ''
         if core:
-            err = core_error(core)
-            if err:
-                note = 'Your core (%s) was not accepted by the optimizer: %s. Ran without a core.' % (core, err)
-                core = ''
+            core, note = repair_core(core)
         match, raw = run_optimizer(floors, '%d' % budget, upgrades, core, get('income') == 'on', runtime)
         if match is None:
             self._send(200, PAGE_TOP + '<p role="alert">The optimizer produced no layout in the time given. Raw output tail:</p><pre>' + html.escape(raw or 'none') + '</pre><p><a href="' + BASE + '/">Back to the form</a></p></body></html>')
