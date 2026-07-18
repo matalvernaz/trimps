@@ -89,17 +89,29 @@ function unlockOne(section, name, changed){
 	if (o && typeof o === 'object' && o.locked){ o.locked = 0; changed.push(section + '.' + name); }
 }
 
+// The planet breaks on killing zone 59's final Improbability (config.js world:59 last:true
+// -> planetBreaker), and only in Universe 1 — U2 never breaks. Specials with
+// brokenPlanet: -1 drop only on the unbroken planet (U1 zones 1-59, every U2 zone);
+// brokenPlanet: 1 only on the broken one (U1 zones 60+, never in U2). This is what retires
+// Speedminer/lumber/farming/science at z60 in favour of the Mega* books.
+var BREAK_ZONE = 60;
+
 // How many books of this special a full clear of zones 1..targetZone-1 collects (the jump
 // lands at the target zone's start, so its own cells are uncleared). Cadence mirrors main.js
 // addSpecials: positive world = that exact zone; negative = repeating (-1 every zone, -2
-// even, -3 odd, -5/-33/-10/-20/-25 every 5th/3rd/10th/20th/25th), bounded by startAt/lastAt
-// and the universe block flags.
+// even, -3 odd, -5/-33/-10/-20/-25 every 5th/3rd/10th/20th/25th), bounded by startAt/lastAt,
+// the universe block flags, and the brokenPlanet window above.
 function naturalDropCount(special, targetZone, universe){
 	if (universe === 2 && special.blockU2) return 0;
 	if (universe !== 2 && special.blockU1) return 0;
 	var first = (typeof special.startAt === 'number') ? special.startAt : 1;
 	var last = targetZone - 1;
 	if (typeof special.lastAt === 'number' && special.lastAt < last) last = special.lastAt;
+	if (special.brokenPlanet === 1){
+		if (universe === 2) return 0;
+		if (first < BREAK_ZONE) first = BREAK_ZONE;
+	}
+	if (special.brokenPlanet === -1 && universe !== 2 && last > BREAK_ZONE - 1) last = BREAK_ZONE - 1;
 	if (last < first) return 0;
 	function multiplesOf(m){ return Math.floor(last / m) - Math.floor((first - 1) / m); }
 	var w = special.world, count = 0;
@@ -121,7 +133,13 @@ function naturalDropCount(special, targetZone, universe){
 function applyWorldUnlockDrops(targetZone, changed){
 	if (typeof game === 'undefined' || !game.worldUnlocks) return false;
 	var universe = (saveObj.global && saveObj.global.universe === 2) ? 2 : 1;
-	var drops = {}; // upgrade -> {count, repeatable}; summed across specials (Gigastation has 5 tiers)
+	// The natural ceiling caps `allowed` at what the save's farthest-reached zone could have
+	// dropped. The engine never hands out more books than the schedule allows, so a count
+	// above the ceiling can only be editor damage (an earlier version over-granted the
+	// brokenPlanet-gated books) — clamp it back down, but never below purchases.
+	var hlc = (saveObj.global && typeof saveObj.global.highestLevelCleared === 'number') ? saveObj.global.highestLevelCleared : 0;
+	var farthestZone = Math.max(targetZone, hlc + 1);
+	var drops = {}; // upgrade -> {count, ceiling, repeatable}; summed across specials (Gigastation has 5 tiers)
 	for (var item in game.worldUnlocks){
 		try {
 			var sp = game.worldUnlocks[item];
@@ -138,22 +156,33 @@ function applyWorldUnlockDrops(targetZone, changed){
 			if (!m) continue; // loot drops, unique-map openers, the easter egg
 			if (sp.locked) continue;
 			var n = naturalDropCount(sp, targetZone, universe);
-			if (!n) continue;
+			var ceil = naturalDropCount(sp, farthestZone, universe);
 			if (m[1] === 'Upgrade'){
-				var d = drops[m[2]] || (drops[m[2]] = { count: 0, repeatable: false });
+				// Register even at 0/0: the clamp below then repairs upgrades this universe
+				// could never have dropped (e.g. broken-planet books in U2).
+				var d = drops[m[2]] || (drops[m[2]] = { count: 0, ceiling: 0, repeatable: false });
 				d.count += n;
+				d.ceiling += ceil;
 				if (sp.world < 0 && !sp.canRunOnce) d.repeatable = true;
 			}
-			else unlockOne(m[1] === 'Job' ? 'jobs' : 'buildings', m[2], changed);
+			else if (n) unlockOne(m[1] === 'Job' ? 'jobs' : 'buildings', m[2], changed);
 		} catch (e){} // holiday entries gate `locked` behind getters that need main.js; skip them
 	}
 	for (var name in drops){
 		var up = saveObj.upgrades && saveObj.upgrades[name];
 		if (!up || typeof up !== 'object') continue;
 		var touched = false;
-		if (up.locked){ up.locked = 0; touched = true; }
-		if (!(up.allowed >= drops[name].count)){ up.allowed = drops[name].count; touched = true; }
-		if (!drops[name].repeatable && !up.done){
+		var d = drops[name];
+		var allowedTarget = Math.max(d.count, Math.min(up.allowed || 0, d.ceiling), up.done || 0);
+		if (d.count > 0 && up.locked){ up.locked = 0; touched = true; }
+		else if (d.ceiling === 0 && !up.done && up.locked === 0){
+			// Unlocked with a zero natural ceiling and nothing bought: no book could ever
+			// have dropped here, so this is earlier editor damage — relock it.
+			up.locked = 1;
+			touched = true;
+		}
+		if ((up.allowed || 0) !== allowedTarget){ up.allowed = allowedTarget; touched = true; }
+		if (!drops[name].repeatable && !up.done && d.count > 0){
 			up.done = 1;
 			touched = true;
 			// A real purchase runs the upgrade's own fire(); grant the job/building it unlocks.
