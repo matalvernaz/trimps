@@ -166,6 +166,73 @@ function applyWorldUnlockDrops(targetZone, changed){
 	return true;
 }
 
+// Challenge completion anchors. Zone-anchored challenges declare completeAfterZone in
+// game.challenges (engine fires entering zone+1); map-anchored ones declare
+// completeAfterMap, resolved via the unique maps' zones: Dimension of Anger 20, Trimple of
+// Doom 33, The Prison 80, Imploding Star 170 (U1); Dimension of Rage 15 (Unlucky's own
+// text), Prismatic Palace 20 and Melting Point 50 (their worldUnlocks entries) (U2).
+var CHALLENGE_MAP_ZONES = {
+	'Dimension of Anger': 20, 'Trimple of Doom': 33, 'The Prison': 80, 'Imploding Star': 170,
+	'Dimension of Rage': 15, 'Prismatic Palace': 20, 'Melting Point': 50
+};
+// Legacy U1 challenges trigger completion in engine code rather than declared data; anchors
+// per each challenge's own description text in config.js.
+var CHALLENGE_LEGACY_ZONES = {
+	Discipline: 20, Metal: 20, Size: 20, Coordinate: 20, // The Dimension of Anger
+	Meditate: 33, Trimp: 33, Trapper: 33,                // Trimple of Doom
+	Mapocalypse: 80,                                     // The Prison
+	Mapology: 100,                                       // "Completing Zone 100"
+	Devastation: 170                                     // Imploding Star
+};
+
+var UNLOCK_PERK_CALL = /unlockPerk\(\s*["']([^"']+)/;
+var MARKS_COMPLETED = /\.completed\s*=\s*true/;
+
+// Grant what completing each challenge would have written to the save, for every challenge
+// a natural run is past by targetZone. Rewards are parsed from the challenge's own
+// onComplete: the completed flag, and the perk it unlockPerk()s — mirrored exactly (U1
+// flips portal.<perk>.locked, U2 flips radLocked, each only when the field exists). Perks
+// are unlocked, not leveled; leveling costs helium/radon as normal. Returns the granted
+// challenge names.
+function applyChallengeCompletions(targetZone, changed){
+	if (typeof game === 'undefined' || !game.challenges) return [];
+	var universe = (saveObj.global && saveObj.global.universe === 2) ? 2 : 1;
+	var granted = [];
+	for (var name in game.challenges){
+		try {
+			var ch = game.challenges[name];
+			if (!ch || typeof ch.onComplete !== 'function') continue;
+			if (universe === 2 && !ch.allowU2) continue;
+			if (universe === 1 && ch.blockU1) continue;
+			var src = String(ch.onComplete);
+			var perk = (src.match(UNLOCK_PERK_CALL) || [])[1];
+			var marks = MARKS_COMPLETED.test(src);
+			if (!perk && !marks) continue;
+			var anchor = 0;
+			if (typeof ch.completeAfterZone === 'number') anchor = ch.completeAfterZone;
+			else if (ch.completeAfterMap && CHALLENGE_MAP_ZONES[ch.completeAfterMap]) anchor = CHALLENGE_MAP_ZONES[ch.completeAfterMap];
+			else if (CHALLENGE_LEGACY_ZONES[name]) anchor = CHALLENGE_LEGACY_ZONES[name];
+			if (!anchor || targetZone < anchor + 1) continue;
+			var touched = false;
+			if (marks && saveObj.challenges && saveObj.challenges[name] && saveObj.challenges[name].completed !== true){
+				saveObj.challenges[name].completed = true;
+				changed.push('challenges.' + name + '.completed');
+				touched = true;
+			}
+			if (perk && saveObj.portal && saveObj.portal[perk]){
+				var lockField = (universe === 2) ? 'radLocked' : 'locked';
+				if (typeof saveObj.portal[perk][lockField] !== 'undefined' && saveObj.portal[perk][lockField] !== false){
+					saveObj.portal[perk][lockField] = false;
+					changed.push('portal.' + perk + '.' + lockField);
+					touched = true;
+				}
+			}
+			if (touched) granted.push(name + (perk ? ' (' + perk + ' perk)' : ''));
+		} catch (e){} // entries with getters that need main.js (Daily); skip them
+	}
+	return granted;
+}
+
 // Apply everything a natural run would have by targetZone. Only ever unlocks — never locks,
 // never lowers done or allowed counts — so jumping below your progress is a no-op for flags.
 function applyZoneJump(targetZone){
@@ -195,11 +262,12 @@ function applyZoneJump(targetZone){
 		}
 	}
 	var derived = applyWorldUnlockDrops(targetZone, changed);
+	var challenges = applyChallengeCompletions(targetZone, changed);
 	saveObj.global.world = targetZone;
 	saveObj.global.lastClearedCell = -1; // zone start, matching the engine's nextWorld reset
 	if (typeof saveObj.global.highestLevelCleared === 'number' && saveObj.global.highestLevelCleared < targetZone - 1)
 		saveObj.global.highestLevelCleared = targetZone - 1;
-	return { changed: changed, derived: derived };
+	return { changed: changed, derived: derived, challenges: challenges };
 }
 
 function onZoneJump(){
@@ -212,8 +280,9 @@ function onZoneJump(){
 	runSearch();
 	invalidateOutputs();
 	setStatus('Jumped to zone ' + z + '. Set world, cell, and zone record, and applied ' + changed.length +
-		' unlock' + (changed.length === 1 ? '' : 's') + ' a natural run would have by now. ' +
-		'Repeatable book upgrades (Coordination, TrainTacular, Gigastation, ...) are made buyable rather than auto-bought — ' +
+		' unlock' + (changed.length === 1 ? '' : 's') + ' a natural run would have by now' +
+		(result.challenges.length ? ', including ' + result.challenges.length + ' completed challenges with their reward perks unlocked (level those at View Perks; levels still cost helium)' : '') +
+		'. Repeatable book upgrades (Coordination, TrainTacular, Gigastation, ...) are made buyable rather than auto-bought — ' +
 		'purchase them in-game with edited resources; Coordination also needs trimp housing. ' +
 		'The current zone still uses the old enemy grid until you finish it.' +
 		(result.derived ? '' : ' WARNING: config.js did not load, so only baseline unlocks were applied. Open the editor from the game folder for the full set.'));
@@ -422,6 +491,16 @@ function wireQuickActions(){
 	});
 	document.getElementById('qaC2Btn').addEventListener('click', function(){
 		runQuickAction('qaC2', true, 'for the target zone', applyRaiseC2);
+	});
+	document.getElementById('qaChallengesBtn').addEventListener('click', function(){
+		runQuickAction('qaChallenges', true, 'for the zone to complete challenges through', function(n){
+			var changed = [];
+			var granted = applyChallengeCompletions(n, changed);
+			if (typeof game === 'undefined' || !game.challenges) return 'The game data (config.js) did not load, so challenges cannot be derived. Open the editor from the game folder.';
+			if (!granted.length) return 'Nothing new to complete: every challenge with a completion anchor at or below zone ' + n + ' for this universe is already done or unlocked.';
+			return 'Completed ' + granted.length + ' challenge' + (granted.length === 1 ? '' : 's') + ': ' + granted.join(', ') +
+				'. Reward perks are unlocked at View Perks; leveling them still costs helium or radon.';
+		});
 	});
 }
 

@@ -42,7 +42,7 @@
 	</ul>
 
 	<h3>Jump to zone</h3>
-	<p>Sets your current zone and zone record, and unlocks what a natural run would have by then, read from the game's own drop tables: the portal, broken planet, formations, automation, jobs, buildings, equipment, foremen, and every one-shot feature book in either universe. Repeatable book upgrades (Coordination, TrainTacular, Efficiency, Gigastation, and the like) are made available to buy in the right quantities — purchase them in-game after editing resources; Coordination also needs trimp housing. It never removes anything, so jumping low is harmless.</p>
+	<p>Sets your current zone and zone record, and unlocks what a natural run would have by then, read from the game's own drop tables: the portal, broken planet, formations, automation, jobs, buildings, equipment, foremen, and every one-shot feature book in either universe. Challenges a natural run is past are marked completed and their reward perks (Range, Carpentry, Coordinated, and so on) are unlocked — leveling those perks still costs helium or radon. Repeatable book upgrades (Coordination, TrainTacular, Efficiency, Gigastation, and the like) are made available to buy in the right quantities — purchase them in-game after editing resources; Coordination also needs trimp housing. It never removes anything, so jumping low is harmless.</p>
 	<label for="jumpZoneInput">Target zone</label>
 	<input id="jumpZoneInput" type="text" inputmode="numeric" autocomplete="off">
 	<button id="jumpZoneBtn" type="button">Jump</button>
@@ -107,7 +107,11 @@
 	<input id="qaScruffy" type="text" inputmode="numeric" autocomplete="off">
 	<button id="qaScruffyBtn" type="button">Set Scruffy level</button>
 
-	<h4>Challenge records</h4>
+	<h4>Challenges</h4>
+	<label for="qaChallenges">Complete challenges a natural run finishes by zone (marks them done and unlocks reward perks like Coordinated; the zone jump also does this automatically)</label>
+	<input id="qaChallenges" type="text" inputmode="numeric" autocomplete="off">
+	<button id="qaChallengesBtn" type="button">Complete challenges</button>
+	<br>
 	<label for="qaC2">Raise every Challenge² and Challenge³ record to zone</label>
 	<input id="qaC2" type="text" inputmode="numeric" autocomplete="off">
 	<button id="qaC2Btn" type="button">Set challenge records</button>
