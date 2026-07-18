@@ -216,13 +216,18 @@ var CHALLENGE_LEGACY_ZONES = {
 
 var UNLOCK_PERK_CALL = /unlockPerk\(\s*["']([^"']+)/;
 var MARKS_COMPLETED = /\.completed\s*=\s*true/;
+var GLOBAL_FLAG_WRITE = /game\.global\.(\w+)\s*=\s*true/g;
+var FILTER_HZE = /getHighestLevelCleared\([^)]*\)\s*>=\s*(\d+)/;
 
 // Grant what completing each challenge would have written to the save, for every challenge
 // a natural run is past by targetZone. Rewards are parsed from the challenge's own
-// onComplete: the completed flag, and the perk it unlockPerk()s — mirrored exactly (U1
-// flips portal.<perk>.locked, U2 flips radLocked, each only when the field exists). Perks
-// are unlocked, not leveled; leveling costs helium/radon as normal. Returns the granted
-// challenge names.
+// onComplete: the completed flag, the perk it unlockPerk()s (mirrored exactly — U1 flips
+// portal.<perk>.locked, U2 flips radLocked, each only when the field exists), and any
+// permanent global flags it sets (frugalDone for 60% Mega books, slowDone, glassDone, ...).
+// A challenge counts as naturally done once the run is past BOTH its completion anchor and
+// its selectability requirement (the filter's zone-record check — Coordinate completes at
+// the z20 map but only unlocks at record 119, so it lands ~z120). Perks are unlocked, not
+// leveled. Returns the granted challenge names.
 function applyChallengeCompletions(targetZone, changed){
 	if (typeof game === 'undefined' || !game.challenges) return [];
 	var universe = (saveObj.global && saveObj.global.universe === 2) ? 2 : 1;
@@ -236,12 +241,18 @@ function applyChallengeCompletions(targetZone, changed){
 			var src = String(ch.onComplete);
 			var perk = (src.match(UNLOCK_PERK_CALL) || [])[1];
 			var marks = MARKS_COMPLETED.test(src);
-			if (!perk && !marks) continue;
+			var flags = [];
+			var fm;
+			GLOBAL_FLAG_WRITE.lastIndex = 0;
+			while ((fm = GLOBAL_FLAG_WRITE.exec(src))) flags.push(fm[1]);
+			if (!perk && !marks && !flags.length) continue;
 			var anchor = 0;
 			if (typeof ch.completeAfterZone === 'number') anchor = ch.completeAfterZone;
 			else if (ch.completeAfterMap && CHALLENGE_MAP_ZONES[ch.completeAfterMap]) anchor = CHALLENGE_MAP_ZONES[ch.completeAfterMap];
 			else if (CHALLENGE_LEGACY_ZONES[name]) anchor = CHALLENGE_LEGACY_ZONES[name];
-			if (!anchor || targetZone < anchor + 1) continue;
+			var filterHZE = ch.filter ? Number((String(ch.filter).match(FILTER_HZE) || [])[1] || 0) : 0;
+			var doneAt = Math.max(anchor ? anchor + 1 : 0, filterHZE ? filterHZE + 1 : 0);
+			if (!doneAt || targetZone < doneAt) continue;
 			var touched = false;
 			if (marks && saveObj.challenges && saveObj.challenges[name] && saveObj.challenges[name].completed !== true){
 				saveObj.challenges[name].completed = true;
@@ -253,6 +264,13 @@ function applyChallengeCompletions(targetZone, changed){
 				if (typeof saveObj.portal[perk][lockField] !== 'undefined' && saveObj.portal[perk][lockField] !== false){
 					saveObj.portal[perk][lockField] = false;
 					changed.push('portal.' + perk + '.' + lockField);
+					touched = true;
+				}
+			}
+			for (var f = 0; f < flags.length; f++){
+				if (saveObj.global && saveObj.global[flags[f]] !== true){
+					saveObj.global[flags[f]] = true;
+					changed.push('global.' + flags[f]);
 					touched = true;
 				}
 			}
