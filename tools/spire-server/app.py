@@ -60,7 +60,7 @@ FORM = """<form method="post" action="{base}/run">
 <input id="floors" name="floors" type="text" inputmode="numeric" required value="{floors}"></label>
 <label>Runestone budget (plain number, no suffixes, for example 250000000)
 <input id="budget" name="budget" type="text" inputmode="numeric" required value="{budget}"></label>
-<label>Trap upgrade levels as four digits: Fire, Frost, Poison, Lightning (a base, just-unlocked trap is 0)
+<label>Trap upgrade levels as four digits: Fire, Frost, Poison, Lightning (each trap's in-game level; use 0 if Poison or Lightning is not unlocked yet)
 <input id="upgrades" name="upgrades" type="text" required pattern="[0-9]{{4}}" value="{upgrades}"></label>
 <label>Core description, optional (for example epic/poison:40/lightning:30)
 <input id="core" name="core" type="text" value="{core}"></label>
@@ -74,8 +74,10 @@ FORM = """<form method="post" action="{base}/run">
 # Mapping notes:
 #   floors   = playerSpire.main.rowsAllowed
 #   budget   = playerSpire.main.runestones
-#   upgrades = per trap, (locked ? 0 : level-1) clamped to that trap's max digit. In-game the
-#              first upgrade is "level 2", so the base trap is level 1 = optimizer digit 0.
+#   upgrades = per trap, locked ? 0 : in-game level, clamped to the max digit. DataBeaver's -u
+#              digit IS the in-game trap level (0 = poison/lightning not unlocked); confirmed by
+#              its max levels 10/8/9/7 matching the game's exactly. Fire's max of 10 can't fit a
+#              single -u digit, so it clamps to 9.
 #   core     = global.CoreEquipped: rarity index -> tier name, non-empty mods -> stat:value.
 SCRIPT = r"""<script src="/lz-string.js"></script>
 <script>
@@ -134,14 +136,15 @@ SCRIPT = r"""<script src="/lz-string.js"></script>
       return;
     }
     if(traps){
-      var order = ["Fire", "Frost", "Poison", "Lightning"], digits = "";
+      var order = ["Fire", "Frost", "Poison", "Lightning"], digits = "", capped = false;
       for(var i=0; i<order.length; i++){
         var t = traps[order[i]];
-        var d = (!t || t.locked) ? 0 : Math.max(0, (t.level | 0) - 1);
-        if(d > MAXDIG[order[i]]) d = MAXDIG[order[i]];
+        var d = (!t || t.locked) ? 0 : (t.level | 0);
+        if(d > MAXDIG[order[i]]){ d = MAXDIG[order[i]]; capped = true; }
         digits += d;
       }
       setVal("upgrades", digits); msgs.push("upgrades " + digits);
+      if(capped) msgs.push("a maxed Fire shows as 9, the highest a single upgrade digit allows");
     }
     var core = (save.global && save.global.CoreEquipped) ? save.global.CoreEquipped : null;
     if(core && core.name){
@@ -179,7 +182,9 @@ def run_optimizer(floors, budget, upgrades, core, income, runtime):
     if income:
         cmd.append('-i')
     if core:
-        # -k keeps the given core mods fixed so the layout is optimized for THIS core.
+        # -k keeps the given core mods (no -d core-budget is passed, so the optimizer treats the
+        # core as owned and won't spend spirestones improving it). Don't add -d 0: it means the
+        # core must cost 0 spirestones, which the optimizer rejects for any real core.
         cmd += ['-c', core, '-k']
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=runtime,
